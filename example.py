@@ -3,8 +3,8 @@ import numpy as np
 from ope.envs.graph import Graph
 from ope.models.basics import BasicPolicy
 
-from ope.experiments.experiment import ExperimentRunner, analysis
-from ope.experiments.config import Config
+from ope.experiment_tools.experiment import ExperimentRunner, analysis
+from ope.experiment_tools.config import Config
 
 
 def main():

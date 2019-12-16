@@ -4,8 +4,8 @@ from ope.envs.gridworld import Gridworld
 from ope.models.epsilon_greedy_policy import EGreedyPolicy
 from ope.models.tabular_model import TabularPolicy
 
-from ope.experiments.experiment import ExperimentRunner, analysis
-from ope.experiments.config import Config
+from ope.experiment_tools.experiment import ExperimentRunner, analysis
+from ope.experiment_tools.config import Config
 
 def main():
 
