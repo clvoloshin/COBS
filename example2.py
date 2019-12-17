@@ -27,7 +27,6 @@ def main():
             "experiment_number": 0,
             "access": 0,
             "secret": 0,
-            "modeltype": "tabluar",
             "to_regress_pi_b": False,
             "frameskip": 1,
             "frameheight": 1,
