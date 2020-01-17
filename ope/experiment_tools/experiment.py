@@ -127,7 +127,7 @@ class ExperimentRunner(object):
 
         for model in models:
             if model == 'MBased_MLE':
-                env_model = MaxLikelihoodModel(gamma, max_traj_length=T)
+                env_model = MaxLikelihoodModel(gamma, max_traj_length=T, action_space_dim=env.n_actions)
                 env_model.run(behavior_data)
                 Qs_model_based = get_Qs.get(env_model)
 
@@ -140,7 +140,7 @@ class ExperimentRunner(object):
             elif model == 'MFree_Reg':
                 DMRegression = DirectMethodRegression(behavior_data, gamma, None, None, None)
                 dm_model_ = DMRegression.run(pi_b, pi_e)
-                dm_model = QWrapper(dm_model_, {}, is_model=True, modeltype='linear')
+                dm_model = QWrapper(dm_model_, {}, is_model=True, modeltype='linear', action_space_dim=env.n_actions)
                 Qs_DM_based = get_Qs.get(dm_model)
 
                 out = self.estimate(Qs_DM_based, behavior_data, gamma,'DM Regression', true)
@@ -148,7 +148,7 @@ class ExperimentRunner(object):
             elif model == 'MFree_FQE':
                 FQE = FittedQEvaluation(behavior_data, gamma)
                 out0, Q, mapping = FQE.run(pi_b, pi_e)
-                fqe_model = QWrapper(Q, mapping, is_model=False)
+                fqe_model = QWrapper(Q, mapping, is_model=False, action_space_dim=env.n_actions)
                 Qs_FQE_based = get_Qs.get(fqe_model)
 
                 out = self.estimate(Qs_FQE_based, behavior_data, gamma, 'FQE', true)
@@ -163,7 +163,7 @@ class ExperimentRunner(object):
             elif model == 'MFree_MRDR':
                 mrdr = MRDR(behavior_data, gamma, modeltype = 'tabular')
                 _ = mrdr.run(pi_e)
-                mrdr_model = QWrapper(mrdr, {}, is_model=True, modeltype='linear') # annoying missname of variable. fix to be modeltype='tabular'
+                mrdr_model = QWrapper(mrdr, {}, is_model=True, modeltype='linear', action_space_dim=env.n_actions) # annoying missname of variable. fix to be modeltype='tabular'
                 Qs_mrdr_based = get_Qs.get(mrdr_model)
 
                 out = self.estimate(Qs_mrdr_based, behavior_data, gamma, 'MRDR', true)
@@ -171,21 +171,21 @@ class ExperimentRunner(object):
             elif model == 'MFree_Retrace_L':
                 retrace = Retrace(behavior_data, gamma, lamb=1.)
                 out0, Q, mapping = retrace.run(pi_b, pi_e, 'retrace', epsilon=.001)
-                retrace_model = QWrapper(Q, mapping, is_model=False)
+                retrace_model = QWrapper(Q, mapping, is_model=False, action_space_dim=env.n_actions)
                 Qs_retrace_based = get_Qs.get(retrace_model)
 
                 out = self.estimate(Qs_retrace_based, behavior_data, gamma, 'Retrace(lambda)', true)
                 dic.update(out)
 
                 out0, Q, mapping = retrace.run(pi_b, pi_e, 'tree-backup', epsilon=.001)
-                retrace_model = QWrapper(Q, mapping, is_model=False)
+                retrace_model = QWrapper(Q, mapping, is_model=False, action_space_dim=env.n_actions)
                 Qs_retrace_based = get_Qs.get(retrace_model)
 
                 out = self.estimate(Qs_retrace_based, behavior_data, gamma, 'Tree-Backup', true)
                 dic.update(out)
 
                 out0, Q, mapping = retrace.run(pi_b, pi_e, 'Q^pi(lambda)', epsilon=.001)
-                retrace_model = QWrapper(Q, mapping, is_model=False)
+                retrace_model = QWrapper(Q, mapping, is_model=False, action_space_dim=env.n_actions)
                 Qs_retrace_based = get_Qs.get(retrace_model)
 
                 out = self.estimate(Qs_retrace_based, behavior_data, gamma, 'Q^pi(lambda)', true)

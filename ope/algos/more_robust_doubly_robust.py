@@ -587,7 +587,7 @@ class MRDR(object):
                 Q[i] = np.matmul(self.weights, self.compute_feature(s, a, 0))
 
             return Q
-        elif self.modeltype == 'linear':
+        elif self.modeltype == 'linear' or self.modeltype == 'tabular':
             acts = np.argmax(x[:,-self.data.n_actions:], axis=1)
             S = x[:,:-self.data.n_actions]
             Q = np.zeros(x.shape[0])

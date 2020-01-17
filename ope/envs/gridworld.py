@@ -65,7 +65,12 @@ class Gridworld(object):
             if delta < epsilon * (1 - gamma) / gamma:
                 return U
 
-    def T(self, s, a):
+    def T(self, s, a, use_slippage=False):
+        '''
+        Used to calc best policy. However, for the purposes of the paper,
+        we calc a policy assuming no slippage even though the actual dynamics
+        have slippage. For the actual T, set the use_slippage flag to True.
+        '''
         state = (s // self.grid.shape[0], s % self.grid.shape[1])
 
         out = []
@@ -74,19 +79,18 @@ class Gridworld(object):
             if not self.is_valid(new_state):
                 new_state = state
 
-            slippage = self.slippage
-            self.slippage = 0
+            slippage = self.slippage if use_slippage else 0
             if action == a:
                 out.append([
-                    1 - self.slippage + self.slippage / self.n_actions,
+                    1 - slippage + slippage / self.n_actions,
                     new_state[0] * self.grid.shape[0] + new_state[1]
                 ])
             else:
                 out.append([
-                    self.slippage / self.n_actions,
+                    slippage / self.n_actions,
                     new_state[0] * self.grid.shape[0] + new_state[1]
                 ])
-            self.slippage = slippage
+
         return out
         # new_state = self.vector_add(state, a)
         # return 1-self.slippage + self.slippage/self.n_actions, new_state[0]*self.grid.shape[0] + new_state[1]
