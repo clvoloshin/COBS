@@ -1,0 +1,17 @@
+{
+    "env": "toy_graph",
+    "gamma": 0.98,
+    "horizon": 16,
+    "base_policy": 4,
+    "eval_policy": 1,
+    "stochastic_env": true,
+    "stochastic_rewards": false,
+    "sparse_rewards": true,
+    "num_traj": 1024,
+    "is_pomdp": true,
+    "pomdp_horizon": 6,
+    "seed": 100,
+    "experiment_number": 0,
+    "access": 0,
+    "secret": 0
+}

@@ -1,0 +1,18 @@
+{
+    "env": "baird",
+    "gamma": 0.99,
+    "horizon": 100,
+    "base_policy": 0,
+    "eval_policy": 1,
+    "stochastic_env": true,
+    "stochastic_rewards": true,
+    "sparse_rewards": false,
+    "num_traj": 1024,
+    "is_pomdp": false,
+    "pomdp_horizon": 2,
+    "seed": 2000,
+    "experiment_number": 0,
+    "access": 0,
+    "secret": 0,
+    "modeltype": "linear"
+}

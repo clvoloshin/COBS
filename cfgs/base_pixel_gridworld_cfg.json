@@ -1,0 +1,19 @@
+{
+    "env": "pixel_gridworld",
+    "gamma": 0.98,
+    "horizon": 25,
+    "base_policy": 80,
+    "eval_policy": 10,
+    "stochastic_env": false,
+    "stochastic_rewards": false,
+    "sparse_rewards": false,
+    "num_traj": 64,
+    "is_pomdp": false,
+    "pomdp_horizon": 2,
+    "seed": 15,
+    "modeltype":"conv",
+    "experiment_number": 0,
+    "access": 0,
+    "secret": 0,
+    "to_regress_pi_b": true
+}

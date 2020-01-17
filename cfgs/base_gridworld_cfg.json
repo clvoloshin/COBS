@@ -1,0 +1,18 @@
+{
+    "env": "gridworld",
+    "gamma": 0.98,
+    "horizon": 25,
+    "base_policy": 60,
+    "eval_policy": 10,
+    "stochastic_env": true,
+    "stochastic_rewards": false,
+    "sparse_rewards": false,
+    "num_traj": 1024,
+    "is_pomdp": false,
+    "pomdp_horizon": 2,
+    "seed": 11,
+    "experiment_number": 0,
+    "access": 0,
+    "secret": 0,
+    "to_regress_pi_b": false
+}

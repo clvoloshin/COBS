@@ -1,0 +1,19 @@
+{
+    "env": "toy_mc",
+    "gamma": 0.99,
+    "horizon": 250,
+    "base_policy": 80,
+    "eval_policy": 20,
+    "stochastic_env": false,
+    "stochastic_rewards": false,
+    "sparse_rewards": false,
+    "num_traj": 128,
+    "is_pomdp": false,
+    "pomdp_horizon": 2,
+    "seed": 100,
+    "experiment_number": 0,
+    "access": 0,
+    "secret": 0,
+    "modeltype": "tabluar",
+    "to_regress_pi_b": false
+}

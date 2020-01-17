@@ -1,0 +1,19 @@
+{
+    "env": "breakout",
+    "gamma": 0.999,
+    "horizon": 500,
+    "base_policy": 3,
+    "eval_policy": 0,
+    "stochastic_env": false,
+    "stochastic_rewards": false,
+    "sparse_rewards": false,
+    "num_traj": 30,
+    "is_pomdp": false,
+    "pomdp_horizon": 2,
+    "seed": 11,
+    "experiment_number": 0,
+    "access": 0,
+    "secret": 0,
+    "to_regress_pi_b": false,
+    "modeltype": "conv"
+}

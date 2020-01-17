@@ -1,0 +1,18 @@
+{
+    "env": "pixel_mc",
+    "gamma": 0.95,
+    "horizon": 150,
+    "base_policy": 2,
+    "eval_policy": 0,
+    "stochastic_env": true,
+    "stochastic_rewards": true,
+    "sparse_rewards": false,
+    "num_traj": 50,
+    "is_pomdp": false,
+    "pomdp_horizon": 2,
+    "seed": 2000,
+    "experiment_number": 0,
+    "access": 0,
+    "secret": 0,
+    "modeltype": "conv"
+}
