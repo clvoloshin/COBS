@@ -24,6 +24,12 @@ class Gridworld(object):
         self.mapping = {val: key for key, val in self.mapping_reversed.items()}
         self.reset()
 
+    def set_reward_function(self, new_R):
+        if (new_R.shape[0] != self.grid.shape[0]) or  (new_R.shape[1] != self.grid.shape[1]):
+            print("Reward function unchanged because shape is not correct. Expected: %s. Received %s." % (self.grid.shape, new_R.shape))
+        else:
+            self.grid = new_R
+
     def expected_utility(self, a, s, U):
         return sum([p * U[s1] for (p, s1) in self.T(s, a)])
 

@@ -360,7 +360,7 @@ class Data(object):
 
                 yield (x, acts)
 
-def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, frameskip=1, frameheight=1, path=None, filename='tmp',preprocessor=None, visualize=False, no_op_steps=0):
+def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, frameskip=1, frameheight=1, path=None, filename='tmp',preprocessor=None, visualize=False, no_op_steps=0, use_only_last_reward=False):
     # filename = os.path.join(path, filename % (N, frameskip))
     # try:
     #     with open(filename) as jsonfile:
@@ -431,7 +431,8 @@ def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, fr
                     reward += rew/frameskip
                     if visualize and (i == 0):
                         plt.imsave('./videos/enduro/%s_%05d.jpg' % (visualize, t), env.render(mode='rgb_array'))
-
+                if use_only_last_reward:
+                    reward = rew
                 true_state = new_state
 
             else:

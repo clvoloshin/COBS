@@ -1065,23 +1065,23 @@ def breakout(param, models, debug=False):
 
     for model in models:
         if (model == 'MBased_Approx') or (model == 'MBased_MLE'):
-            if model == 'MBased_MLE':
-                print('*'*20)
-                print('MLE estimator not implemented for continuous state space. Using MBased_Approx instead')
-                print('*'*20)
-            print('*'*20)
-            print('R(lambda): These methods are incredibly expensive and not as performant. To use, uncomment below.')
-            print('*'*20)
-            pass
-            # MBased_max_trajectory_length = 50 if not debug else 1
-            # batchsize = 32
-            # mbased_num_epochs = 100 if not debug else 1
-            # MDPModel = ApproxModel(gamma, None, MBased_max_trajectory_length, FRAMESKIP, FRAMEHEIGHT, processor, action_space_dim=env.n_actions)
-            # mdpmodel = MDPModel.run(env, behavior_data, mbased_num_epochs, batchsize, modeltype)
+            # if model == 'MBased_MLE':
+            #     print('*'*20)
+            #     print('MLE estimator not implemented for continuous state space. Using MBased_Approx instead')
+            #     print('*'*20)
+            # print('*'*20)
+            # print('R(lambda): These methods are incredibly expensive and not as performant. To use, uncomment below.')
+            # print('*'*20)
+            # pass
+            MBased_max_trajectory_length = 50 if not debug else 1
+            batchsize = 32
+            mbased_num_epochs = 100 if not debug else 1
+            MDPModel = ApproxModel(gamma, None, MBased_max_trajectory_length, FRAMESKIP, FRAMEHEIGHT, processor, action_space_dim=env.n_actions)
+            mdpmodel = MDPModel.run(env, behavior_data, mbased_num_epochs, batchsize, modeltype)
 
-            # Qs_model_based = get_Qs.get(mdpmodel)
-            # out = estimate(Qs_model_based, behavior_data, gamma,'MBased_Approx', true)
-            # dic.update(out)
+            Qs_model_based = get_Qs.get(mdpmodel)
+            out = estimate(Qs_model_based, behavior_data, gamma,'MBased_Approx', true)
+            dic.update(out)
 
         elif model == 'MFree_Reg':
             DMRegression = DirectMethodRegression(behavior_data, gamma, FRAMESKIP, FRAMEHEIGHT, modeltype, processor)

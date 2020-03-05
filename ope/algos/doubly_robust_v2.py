@@ -11,7 +11,7 @@ class DoublyRobust_v2(object):
     def __init__(self, gamma):
         self.gamma = gamma
 
-    def evaluate(self, info, is_wdr=False):
+    def evaluate(self, info, is_wdr=False, return_Qs=False):
 
 
         (actions,
@@ -63,7 +63,10 @@ class DoublyRobust_v2(object):
                     estimated_q_values_for_logged_action,
                 )
 
-        return np.array(out).sum()
+        if return_Qs:
+            return np.array(out).sum(), np.array(out)
+        else:
+            return np.array(out).sum()
 
     @staticmethod
     def transform_to_equal_length_trajectories(

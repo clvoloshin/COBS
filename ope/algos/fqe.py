@@ -135,7 +135,7 @@ class FittedQEvaluation(object):
 
         self.R1 = rew
 
-    def run(self, pi_b, pi_e, epsilon=0.001, max_epochs=10000):
+    def run(self, pi_b, pi_e, epsilon=0.001, max_epochs=10000, verbose = True):
 
         data = self.data.basic_transitions()
 
@@ -182,7 +182,7 @@ class FittedQEvaluation(object):
                 U1[x, a] = np.mean(vals)#expected_reward + self.gamma*expected_Q
 
                 delta = max(delta, abs(U1[x,a] - U[x,a]))
-            print(count, delta)
+            if verbose: print(count, delta)
 
             if self.gamma == 1:
                 # TODO: include initial state distribution

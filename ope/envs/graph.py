@@ -34,7 +34,15 @@ class Graph(object):
 		self.max_length = max_length
 		self.sparse_rewards = sparse_rewards
 		self.stochastic_rewards = stochastic_rewards
+		self.reward_overwrite = None # only for simulator work
+		self.absorbing_state = None # only for simulator work
 		self.reset()
+
+	def overwrite_rewards(self, new_r):
+		self.reward_overwrite = new_r
+
+	def set_absorb(self, absorb):
+		self.absorbing_state = absorb
 
 	def num_states(self):
 		return self.n_dim
@@ -52,7 +60,7 @@ class Graph(object):
 		assert action in self.allowable_actions
 		assert not self.done, 'Episode Over'
 		reward = 0 if not self.stochastic_rewards else np.random.randn()
-
+		prev_state = self.state_to_pomdp_state[self.state] if self.make_pomdp else self.state
 
 		if self.state == (2*self.max_length-3):
 			reward = 1 if not self.stochastic_rewards else np.random.randn()+1
@@ -119,7 +127,18 @@ class Graph(object):
 
 				# reward = 1 if self.state == 2*self.max_length-1
 
-		state = self.state_to_pomdp_state[self.state]
+		state = self.state_to_pomdp_state[self.state] if self.make_pomdp else self.state
+
+		if self.reward_overwrite is not None:
+			key = tuple([int(prev_state), int(action), int(state)]) if not self.done else tuple([prev_state, action, self.absorbing_state])
+			# key = tuple([int(prev_state), int(action)]) if not self.done else tuple([prev_state, action])
+			if key in self.reward_overwrite:
+				try:
+					reward = np.random.choice(list(self.reward_overwrite[key]), p=list(self.reward_overwrite[key].values()))
+				except:
+					import pdb; pdb.set_trace()
+			else:
+				reward = 0
 
 		if self.make_pomdp:
 			# only reveal state, not internal state (POMDP)
@@ -168,19 +187,19 @@ class Graph(object):
 		# Approx
 		evaluation = []
 		for i in range(5000):
-		    done = False
-		    state = self.reset()
-		    # env.render()
-		    rewards = []
-		    while not done:
-		        action = pi_e([state])
-		        # print(action)
-		        next_state, reward, done = self.step(action)
-		        # env.render()
-		        state = next_state
-		        rewards.append(reward)
+			done = False
+			state = self.reset()
+			# env.render()
+			rewards = []
+			while not done:
+				action = pi_e([state])
+				# print(action)
+				next_state, reward, done = self.step(action)
+				# env.render()
+				state = next_state
+				rewards.append(reward)
 
-		    evaluation.append(rewards)
+			evaluation.append(rewards)
 
 		true = np.mean([self.discounted_sum(rew, gamma) for rew in np.array(evaluation)])
 
@@ -188,11 +207,8 @@ class Graph(object):
 
 	@staticmethod
 	def discounted_sum(costs, discount):
-	    '''
-	    Calculate discounted sum of costs
-	    '''
-	    y = signal.lfilter([1], [1, -discount], x=costs[::-1])
-	    return y[::-1][0]
-
-
-
+		'''
+		Calculate discounted sum of costs
+		'''
+		y = signal.lfilter([1], [1, -discount], x=costs[::-1])
+		return y[::-1][0]

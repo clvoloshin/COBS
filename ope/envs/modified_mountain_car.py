@@ -13,28 +13,37 @@ from copy import deepcopy
 import matplotlib.pyplot as plt
 
 class ModifiedMountainCarEnv(MountainCarEnv):
-    def __init__(self, deterministic_start = None, seed=0, *args, **kw):
+    def __init__(self, deterministic_start = None, seed=0, frameskip=1, frameheight=1, *args, **kw):
         self.start = deterministic_start
         super(ModifiedMountainCarEnv, self).__init__(*args, **kw)
         self.background = None
         self.n_actions = 3
         self.n_dim = 1
+        self.reward_model = None
+        self.T = 0
+        self.frameskip = frameskip
+        self.frameheight = frameheight
         self.seed(seed)
         self.reset()
         self.render()
 
+    def overwrite_rewards(self, new_r):
+        self.reward_model = new_r
+
     def step(self, action):
         assert self.action_space.contains(action), "%r (%s) invalid" % (action, type(action))
+        self.T += 1
 
         position, velocity = self.state
+        done = bool(position >= self.goal_position)
         velocity += (action-1)*self.force + math.cos(3*position)*(-self.gravity)
         velocity = np.clip(velocity, -self.max_speed, self.max_speed)
         position += velocity
         position = np.clip(position, self.min_position, self.max_position)
         if (position==self.min_position and velocity<0): velocity = 0
 
-        done = bool(position >= self.goal_position)
-        
+
+
         # if self.done:
         #     reward = 0
         # else:
@@ -48,11 +57,18 @@ class ModifiedMountainCarEnv(MountainCarEnv):
         # reward = -1 if action != 1 else -.5
         # reward = np.random.randn()# 0 if not done else 1
         # reward = 0 if self.done else -1
-        reward = -1
+        # reward = -1
+        if self.reward_model is not None:
+            reward = -self.reward_model.predict(np.atleast_2d(np.hstack([*self.last_state, self.state, np.eye(3)[action]])))[0][0]
+        else:
+            reward = min(0, position - self.goal_position) # penalize you from being far away
 
         self.state = (position, velocity)
+        if (self.T % self.frameskip) == 0:
+            self.last_state.pop(0)
+            self.last_state.append(np.array(deepcopy(self.state)))
 
-        # if done: 
+        # if done:
         #     self.done = True
         #     self.state = self.start_state
 
@@ -64,13 +80,16 @@ class ModifiedMountainCarEnv(MountainCarEnv):
 
     def reset(self):
         self.done = False
+        self.T = 0
         if self.start is not None:
             self.state = np.array([self.np_random.choice(self.start), 0])
             self.start_state = deepcopy(self.state)
+            self.last_state = [deepcopy(self.state)] * self.frameheight
             return np.array(self.state)
         else:
             self.state = np.array([self.np_random.uniform(low=-0.6, high=-0.4), 0])
             self.start_state = deepcopy(self.state)
+            self.last_state = [deepcopy(self.state)] * self.frameheight
             return np.array(self.state)
 
     @staticmethod
@@ -105,7 +124,7 @@ class ModifiedMountainCarEnv(MountainCarEnv):
         world_width = self.max_position - self.min_position
         self.scale = self.screen_width/world_width
         # import pdb; pdb.set_trace()
-        carwidth=40 
+        carwidth=40
         carheight=20
 
         if self.background is None:
@@ -193,8 +212,8 @@ class ModifiedMountainCarEnv(MountainCarEnv):
             # import pdb; pdb.set_trace()
             self.background = downscale_local_mean(self.background, (self.downscale,self.downscale))
             self.viewer.close()
-                        
-        
+
+
         pos = self.state[0]
         x, y = (pos-self.min_position)*self.scale, (self.screen_height-self._height(pos)*self.scale)
         # self.cartrans.set_translation(x/2, -y/2+self.screen_height)
@@ -204,7 +223,7 @@ class ModifiedMountainCarEnv(MountainCarEnv):
         arr = deepcopy(self.background)
         normal = self._normal(pos)
         normal = normal * self.circle_radius
-        arr[np.minimum(self.screen_height // self.downscale - 1,(self.rr -500 + y + normal[1]).astype(int) // self.downscale), 
+        arr[np.minimum(self.screen_height // self.downscale - 1,(self.rr -500 + y + normal[1]).astype(int) // self.downscale),
             np.minimum(self.screen_width // self.downscale - 1, (self.cc -500 + x - normal[0]).astype(int) // self.downscale)] = [0.]
 
         # plt.imshow(arr, cmap='gray')
@@ -219,11 +238,11 @@ class ModifiedMountainCarEnv(MountainCarEnv):
             arrs = []
             for pos in position:
                 x, y = (pos-self.min_position)*self.scale, (self.screen_height-self._height(pos)*self.scale)
-            
+
                 arr = deepcopy(self.background)
                 normal = self._normal(pos)
                 normal = normal * self.circle_radius
-                arr[np.minimum(self.screen_height // self.downscale - 1,(self.rr -500 + y + normal[1]).astype(int) // self.downscale), 
+                arr[np.minimum(self.screen_height // self.downscale - 1,(self.rr -500 + y + normal[1]).astype(int) // self.downscale),
                     np.minimum(self.screen_width // self.downscale - 1, (self.cc -500 + x - normal[0]).astype(int) // self.downscale)] = [0.]
 
                 arrs.append(arr)

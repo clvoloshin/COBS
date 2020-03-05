@@ -6,7 +6,7 @@ class AverageModel(object):
     def __init__(self, gamma):
         self.gamma = gamma
 
-    def evaluate(self, info):
+    def evaluate(self, info, return_Qs=True):
         (actions,
         rewards,
         base_propensity,
@@ -20,7 +20,10 @@ class AverageModel(object):
             np.multiply(target_propensities, estimated_q_values), axis=2
         )
 
-        return np.mean([V[0] for V in estimated_state_values])
+        if return_Qs:
+            return np.mean([V[0] for V in estimated_state_values]), np.array([V[0] for V in estimated_state_values])
+        else:
+            return np.mean([V[0] for V in estimated_state_values])
 
     @staticmethod
     def transform_to_equal_length_trajectories(
@@ -37,7 +40,7 @@ class AverageModel(object):
         filled with zeros(ones) at the end.
         """
         num_actions = len(target_propensities[0][0])
-        
+
         def to_equal_length(x, fill_value):
             x_equal_length = np.array(
                 list(itertools.zip_longest(*x, fillvalue=fill_value))
@@ -70,4 +73,3 @@ class AverageModel(object):
             Q_value_trajectories,
         )
 
-        

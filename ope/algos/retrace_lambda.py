@@ -27,7 +27,7 @@ class Retrace(object):
         self.max_iters = max_iters
 
 
-    def run(self, pi_b, pi_e, method, epsilon=0.001, lamb=None):
+    def run(self, pi_b, pi_e, method, epsilon=0.001, lamb=None, verbose=True, diverging_epsilon=1000):
         lamb = lamb if lamb is not None else self.lamb
         assert method in ['retrace','tree-backup','Q^pi(lambda)','IS']
 
@@ -107,9 +107,10 @@ class Retrace(object):
             U1 = U1 + update
             delta = np.linalg.norm(U-U1)
             count += 1
-            print(count, delta)
-            if delta < epsilon or count > self.max_iters:# * (1 - self.gamma) / self.gamma:
+            if verbose: print(count, delta)
+            if delta < epsilon or count > self.max_iters or delta > diverging_epsilon:# * (1 - self.gamma) / self.gamma:
                 return np.sum([prob*U1[0, new_a] for new_a,prob in enumerate(pi_e.predict([0])[0])]), U1, mapping #U[0,pi_e([0])][0]
+
 
 
 

@@ -14,8 +14,8 @@ class MAGIC(object):
     def __init__(self, gamma):
         self.gamma = gamma
 
-    def evaluate(self, info, num_j_steps, is_wdr):
-        
+    def evaluate(self, info, num_j_steps, is_wdr, return_Qs = False):
+
 
         (actions,
         rewards,
@@ -128,7 +128,7 @@ class MAGIC(object):
                 infinite_step_returns.append(infinite_step_return)
 
             # Compute weighted_doubly_robust mean point estimate using all data
-            weighted_doubly_robust = self.compute_weighted_doubly_robust_point_estimate(
+            weighted_doubly_robust, xs = self.compute_weighted_doubly_robust_point_estimate(
                 j_steps,
                 num_j_steps,
                 j_step_returns,
@@ -162,15 +162,21 @@ class MAGIC(object):
         if abs(denominator) < 1e-6:
             return [0]*4
 
-        print (weighted_doubly_robust,
-                weighted_doubly_robust / denominator,
-                weighted_doubly_robust_std_error,
-                weighted_doubly_robust_std_error / denominator)
-        
-        return [weighted_doubly_robust,
-                weighted_doubly_robust / denominator,
-                weighted_doubly_robust_std_error,
-                weighted_doubly_robust_std_error / denominator]
+        # print (weighted_doubly_robust,
+        #         weighted_doubly_robust / denominator,
+        #         weighted_doubly_robust_std_error,
+        #         weighted_doubly_robust_std_error / denominator)
+
+        if return_Qs:
+            return [weighted_doubly_robust,
+                    weighted_doubly_robust / denominator,
+                    weighted_doubly_robust_std_error,
+                    weighted_doubly_robust_std_error / denominator], np.dot(xs, j_step_return_trajectories)
+        else:
+            return [weighted_doubly_robust,
+                    weighted_doubly_robust / denominator,
+                    weighted_doubly_robust_std_error,
+                    weighted_doubly_robust_std_error / denominator]
 
     def compute_weighted_doubly_robust_point_estimate(
         self,
@@ -206,7 +212,7 @@ class MAGIC(object):
             bounds=[(0, 1) for _ in range(x.shape[0])],
         )
         x = np.array(res.x)
-        return float(np.dot(x, j_step_returns))
+        return float(np.dot(x, j_step_returns)), x
 
     @staticmethod
     def transform_to_equal_length_trajectories(
@@ -223,7 +229,7 @@ class MAGIC(object):
         filled with zeros(ones) at the end.
         """
         num_actions = len(target_propensities[0][0])
-        
+
         def to_equal_length(x, fill_value):
             x_equal_length = np.array(
                 list(itertools.zip_longest(*x, fillvalue=fill_value))

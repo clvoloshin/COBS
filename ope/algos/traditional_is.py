@@ -9,7 +9,7 @@ class TraditionalIS(object):
     def __init__(self, gamma):
         self.gamma = gamma
 
-    def evaluate(self, info):
+    def evaluate(self, info, return_Qs=False):
 
         (actions,
         rewards,
@@ -25,31 +25,43 @@ class TraditionalIS(object):
 
         importance_weights = [ np.array(p_target)/np.array(p_base) for p_target, p_base in zip(target_propensity_for_logged_action, base_propensity_for_logged_action)]
 
-        V_IS = self.IS(importance_weights, rewards)
-        V_step_IS = self.step_IS(importance_weights, rewards)
-        V_WIS = self.WIS(importance_weights, rewards)
-        V_step_WIS = self.step_WIS(importance_weights, rewards)
-        V_naive = self.naive(importance_weights, rewards)
+        V_IS = self.IS(importance_weights, rewards, return_Qs)
+        V_step_IS = self.step_IS(importance_weights, rewards, return_Qs)
+        V_WIS = self.WIS(importance_weights, rewards, return_Qs)
+        V_step_WIS = self.step_WIS(importance_weights, rewards, return_Qs)
+        V_naive = self.naive(importance_weights, rewards, return_Qs)
 
         return V_naive, V_IS, V_step_IS, V_WIS, V_step_WIS
 
-    def naive(self, episode_rhos, episode_rews):
+    def naive(self, episode_rhos, episode_rews, return_Qs=False):
         V_naive = [np.sum(self.gamma**np.arange(len(rews)) * np.array(rews))   for rhos, rews in zip(episode_rhos, episode_rews)]
-        return np.mean(V_naive)
+        if return_Qs:
+            return np.mean(V_naive), np.array(V_naive)
+        else:
+            return np.mean(V_naive)
 
-    def IS(self, episode_rhos, episode_rews):
+    def IS(self, episode_rhos, episode_rews, return_Qs=False):
         V_IS = [np.prod(rhos) * np.sum(self.gamma**np.arange(len(rews)) * np.array(rews))  for rhos, rews in zip(episode_rhos, episode_rews)]
-        return np.mean(V_IS)
+        if return_Qs:
+            return np.mean(V_IS), np.array(V_IS)
+        else:
+            return np.mean(V_IS)
 
-    def step_IS(self, episode_rhos, episode_rews):
+    def step_IS(self, episode_rhos, episode_rews, return_Qs=False):
         V_step_IS = [np.sum(self.gamma**np.arange(len(rews)) * np.cumprod(rhos) * np.array(rews))  for rhos, rews in zip(episode_rhos, episode_rews)]
-        return np.mean(V_step_IS)
+        if return_Qs:
+            return np.mean(V_step_IS), np.array(V_step_IS)
+        else:
+            return np.mean(V_step_IS)
 
-    def WIS(self, episode_rhos, episode_rews):
+    def WIS(self, episode_rhos, episode_rews, return_Qs=False):
         V_WIS = [np.prod(rhos) * np.sum(self.gamma**np.arange(len(rews)) * np.array(rews))  for rhos, rews in zip(episode_rhos, episode_rews)]
-        return np.sum(V_WIS) / np.sum([np.prod(rhos) for rhos in  episode_rhos])
+        if return_Qs:
+            return np.sum(V_WIS) / np.sum([np.prod(rhos) for rhos in  episode_rhos]), np.array(V_WIS) / np.sum([np.prod(rhos) for rhos in  episode_rhos]) * len(V_WIS)
+        else:
+            return np.sum(V_WIS) / np.sum([np.prod(rhos) for rhos in  episode_rhos])
 
-    def step_WIS(self, episode_rhos, episode_rews):
+    def step_WIS(self, episode_rhos, episode_rews, return_Qs=False):
         def to_equal_length(x, fill_value):
             x_equal_length = np.array(
                 list(itertools.zip_longest(*x, fillvalue=fill_value))
@@ -58,4 +70,7 @@ class TraditionalIS(object):
 
         ws = np.sum(np.cumprod(to_equal_length(episode_rhos, 1), axis=1), axis=0)
         V_step_IS = [np.sum(self.gamma**np.arange(len(rews)) * np.cumprod(rhos) / ws[:len(rhos)] * np.array(rews))  for rhos, rews in zip(episode_rhos, episode_rews)]
-        return np.sum(V_step_IS)
+        if return_Qs:
+            return np.sum(V_step_IS), np.array(V_step_IS)
+        else:
+            return np.sum(V_step_IS)

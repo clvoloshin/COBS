@@ -97,6 +97,25 @@ class ExperimentRunner(object):
 
         return results
 
+    def get_rollout(self, cfg, eval_data=False, N_overwrite = None):
+        env = cfg.env
+        pi_e = cfg.pi_e
+        pi_b = cfg.pi_b
+        processor = cfg.processor
+        absorbing_state = cfg.absorbing_state
+        T = cfg.horizon
+        frameskip = cfg.frameskip if cfg.frameskip is not None else 1
+        frameheight = cfg.frameheight if cfg.frameheight is not None else 1
+        use_only_last_reward = cfg.use_only_last_reward if cfg.use_only_last_reward is not None else False
+
+        if eval_data:
+            data = rollout(env, pi_e, processor, absorbing_state, N=max(10000, cfg.num_traj) if N_overwrite is None else N_overwrite, T=T, frameskip=frameskip, frameheight=frameheight, path=None, filename='tmp', use_only_last_reward=use_only_last_reward)
+        else:
+            data = rollout(env, pi_b, processor, absorbing_state, pi_e = pi_e, N=cfg.num_traj, T=T, frameskip=frameskip, frameheight=frameheight, path=None, filename='tmp',use_only_last_reward=use_only_last_reward)
+
+        return data
+
+
     def run_tabular(self, cfg):
         env = cfg.env
         pi_e = cfg.pi_e
@@ -224,8 +243,8 @@ class ExperimentRunner(object):
             if models == 'all':
                 models = ['MFree_Retrace_L', 'MFree_MRDR', 'MFree_IH', 'MFree_FQE', 'MBased_MLE', 'MFree_Reg', 'IS']
 
-        eval_data = rollout(env, pi_e, processor, absorbing_state, N=max(10000, cfg.num_traj), T=T, frameskip=1, frameheight=1, path=None, filename='tmp',)
-        behavior_data = rollout(env, pi_b, processor, absorbing_state, pi_e = pi_e, N=cfg.num_traj, T=T, frameskip=1, frameheight=1, path=None, filename='tmp',)
+        eval_data = rollout(env, pi_e, processor, absorbing_state, N=max(10000, cfg.num_traj), T=T, frameskip=frameskip, frameheight=frameheight, path=None, filename='tmp',)
+        behavior_data = rollout(env, pi_b, processor, absorbing_state, pi_e = pi_e, N=cfg.num_traj, T=T, frameskip=frameskip, frameheight=frameheight, path=None, filename='tmp',)
 
         if cfg.convert_from_int_to_img is not None:
             traj = []
