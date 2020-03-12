@@ -6,7 +6,7 @@ class AverageModel(object):
     def __init__(self, gamma):
         self.gamma = gamma
 
-    def evaluate(self, info, return_Qs=True):
+    def evaluate(self, info, return_Qs=False):
         (actions,
         rewards,
         base_propensity,
