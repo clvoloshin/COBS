@@ -866,8 +866,8 @@ def pixel_mc(param, models, debug=False):
     actions = [0,1,2]
     probs_base = [.01, .1, .25, 1.]
     probs_eval = [0., .1, .25, 1.]
-    pi_e = EGreedyPolicy(model=load_model(os.path.join(os.getcwd(),'trained_models','mc_pixel_trained_model_Q.h5')), prob_deviation=probs_eval[eval_policy], action_space_dim=len(actions))
-    pi_b = EGreedyPolicy(model=load_model(os.path.join(os.getcwd(),'trained_models','mc_pixel_trained_model_Q.h5')), prob_deviation=probs_base[base_policy], action_space_dim=len(actions))
+    pi_e = EGreedyPolicy(model=load_model(os.path.join(os.getcwd(),'ope','trained_models','mc_pixel_trained_model_Q.h5')), prob_deviation=probs_eval[eval_policy], action_space_dim=len(actions))
+    pi_b = EGreedyPolicy(model=load_model(os.path.join(os.getcwd(),'ope','trained_models','mc_pixel_trained_model_Q.h5')), prob_deviation=probs_base[base_policy], action_space_dim=len(actions))
 
     processor = lambda x: env.pos_to_image(x, True)
     absorbing_state = ABS_STATE

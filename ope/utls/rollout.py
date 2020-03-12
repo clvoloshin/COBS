@@ -51,6 +51,18 @@ class Data(object):
         self.n_dim = dic['n_dim']
         self.make_int = dic['make_int']
 
+    def __add__(self, other):
+        if (isinstance(other, Data)):
+            assert (self.n_actions == other.n_actions)
+            assert (self.n_dim == other.n_dim)
+            assert (self.make_int == other.make_int)
+
+            return Data(self.trajectories + other.trajectories, self.n_actions, self.n_dim, self.make_int)
+        else:
+            return self
+
+    __radd__ = __add__
+
     def copy(self, low_=None, high_=None):
         if (low_ is not None) and (high_ is not None):
             return Data(self.trajectories[low_:high_], self.n_actions, self.n_dim, self.make_int)
@@ -154,17 +166,20 @@ class Data(object):
         else:
             return np.array([data['base_propensity'] for data in self.trajectories]).reshape(-1,1).T
 
-    def target_propensity(self, trajectory_wise=True):
+    def target_propensity(self, trajectory_wise=True, pie_k=0):
+        key = 'target_propensity_%s' % pie_k
         if trajectory_wise:
-            return np.array([data['target_propensity'] for data in self.trajectories])
+            return np.array([data[key] for data in self.trajectories])
         else:
-            return np.array([data['target_propensity'] for data in self.trajectories]).reshape(-1,1).T
+            return np.array([data[key] for data in self.trajectories]).reshape(-1,1).T
 
-    def next_target_propensity(self, trajectory_wise=True):
+    def next_target_propensity(self, trajectory_wise=True, pie_k=0):
+        key = 'target_propensity_%s' % pie_k
+        key2 = 'extra_propensity_%s' % pie_k
         if trajectory_wise:
-            return np.array([data['target_propensity'][1:] + [data['extra_propensity']] for data in self.trajectories])
+            return np.array([data[key][1:] + [data[key2]] for data in self.trajectories])
         else:
-            return np.array([data['target_propensity'][1:] + [data['extra_propensity']] for data in self.trajectories]).reshape(-1,1).T
+            return np.array([data[key][1:] + [data[key2]] for data in self.trajectories]).reshape(-1,1).T
 
     def input_shape(self, process):
         return list(process(np.array(self.trajectories[0]['x'][0])[np.newaxis,...]).shape[1:])
@@ -211,9 +226,9 @@ class Data(object):
     def __len__(self):
         return len(self.trajectories)
 
-    def all_transitions(self):
+    def all_transitions(self, pie_k=0):
         ''' for mle '''
-        policy_action = np.vstack([episode['target_propensity'] for episode in self.trajectories])
+        policy_action = np.vstack([episode['target_propensity_%s' % pie_k] for episode in self.trajectories])
         dataset = np.hstack([ np.vstack([x['x'] for x in self.trajectories]),
                               np.hstack([x['a'] for x in self.trajectories]).T.reshape(-1, 1),
                               np.hstack([x['r'] for x in self.trajectories]).T.reshape(-1, 1),
@@ -223,6 +238,28 @@ class Data(object):
                               np.hstack([[n]*len(x['x']) for n,x in enumerate(self.trajectories)]).T.reshape(-1,1),
                               np.hstack([np.arange(len(x['x'])) for n,x in enumerate(self.trajectories)]).T.reshape(-1,1),])
         return dataset
+
+    def all_transitions_df(self):
+        ''' for mle '''
+        n_policies = len([key for key in self.trajectories[0].keys() if 'target_propensity' in key])
+
+        A = np.hstack([x['a'] for x in self.trajectories]).T.reshape(-1, 1)
+
+        propensities = []
+        for k in range(n_policies):
+            policy_action = np.vstack([episode['target_propensity_%s' % k] for episode in self.trajectories])
+            propensities.append(policy_action[np.arange(len(A)), A.reshape(-1)].reshape(-1,1))
+
+        dataset = np.hstack([ np.vstack([x['x'] for x in self.trajectories]),
+                              A,
+                              np.hstack([x['r'] for x in self.trajectories]).T.reshape(-1, 1),
+                              np.vstack([x['x_prime'] for x in self.trajectories]),
+                              np.hstack([x['done'] for x in self.trajectories]).T.reshape(-1, 1),
+                              *propensities,
+                              np.hstack([[n]*len(x['x']) for n,x in enumerate(self.trajectories)]).T.reshape(-1,1),
+                              np.hstack([np.arange(len(x['x'])) for n,x in enumerate(self.trajectories)]).T.reshape(-1,1),])
+
+        return pd.DataFrame(dataset, columns=['x', 'a','r','x_','done',*['pie_%s' % k for k in range(n_policies)], 't_num', 't'])
 
     def basic_transitions(self):
         ''' for fqe'''
@@ -235,8 +272,8 @@ class Data(object):
                           np.array([x['done'] for x in self.trajectories]).reshape(-1,1).T]).T
         return data
 
-    def omega(self):
-        return np.array([[episode['target_propensity'][idx][int(act)]/episode['base_propensity'][idx][int(act)] for idx,act in enumerate(episode['a'])] for episode in self.trajectories])
+    def omega(self, pie_k=0):
+        return np.array([[episode['target_propensity_%s' % pie_k][idx][int(act)]/episode['base_propensity'][idx][int(act)] for idx,act in enumerate(episode['a'])] for episode in self.trajectories])
 
     def estimate_propensity(self, use_NN=False):
         # WARN: Only works in tabular env with discrete action space. Current implementation is a max likelihood
@@ -360,14 +397,14 @@ class Data(object):
 
                 yield (x, acts)
 
-def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, frameskip=1, frameheight=1, path=None, filename='tmp',preprocessor=None, visualize=False, no_op_steps=0, use_only_last_reward=False):
+def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, frameskip=1, frameheight=1, path=None, filename='tmp',preprocessor=None, visualize=False, no_op_steps=0, use_only_last_reward=False, continue_sampling_in_abs_state=False, verbose_tqdm=True):
     # filename = os.path.join(path, filename % (N, frameskip))
     # try:
     #     with open(filename) as jsonfile:
     #         trajectories = json.load(jsonfile)
     # except:
     trajectories = []
-    for i in tqdm(range(N)):
+    for i in tqdm(range(N), disable=not verbose_tqdm):
         done = False
         state = env.reset()
 
@@ -384,9 +421,16 @@ def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, fr
                    'x_prime': [],
                    'done': [],
                    'base_propensity': [],
-                   'target_propensity': [],
+                   'target_propensity_0': [],
                    'frames': [],
-                   'extra_propensity': []}
+                   'extra_propensity_0': []}
+        if pi_e is not None and not isinstance(pi_e,list):
+            pi_e = [pi_e]
+
+        for k, pie in enumerate(pi_e):
+            episode['target_propensity_%s' % k] = []
+            episode['extra_propensity_%s' % k] = []
+
         t = 0
         if preprocessor:
             frames = [preprocessor(np.array([true_state]))]*frameheight #+ [absorbing_state]*(frameheight-1)
@@ -414,7 +458,8 @@ def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, fr
                 if N_acts is None: N_acts = len(pi_b.predict(im).tolist()[0])
                 episode['base_propensity'].append(pi_b.predict(im).tolist()[0])
                 if pi_e is not None:
-                    episode['target_propensity'].append(pi_e.predict(im).tolist()[0])
+                    for k, pie in enumerate(pi_e):
+                        episode['target_propensity_%s' % k].append(pie.predict(im).tolist()[0])
 
                 reward = 0
                 for _ in range(frameskip):
@@ -436,15 +481,28 @@ def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, fr
                 true_state = new_state
 
             else:
-                action = 0
-                # propensity = [1/N_acts]*N_acts
-                # propensity[-1] = 1 - sum(propensity[:-1])
-                # import pdb; pdb.set_trace()
-                propensity = [1e-8] * N_acts
-                propensity[action] += 1 - sum(propensity)
-                episode['base_propensity'].append(propensity)
-                if pi_e is not None:
-                    episode['target_propensity'].append(propensity)
+                if continue_sampling_in_abs_state:
+                    im = process(np.array(frames)[np.newaxis, ...])
+                    # im = np.array(frames)[np.newaxis, ...]
+
+                    action = int(pi_b.sample(im))#pi_b([state])
+
+                    if N_acts is None: N_acts = len(pi_b.predict(im).tolist()[0])
+                    episode['base_propensity'].append(pi_b.predict(im).tolist()[0])
+                    if pi_e is not None:
+                        for k, pie in enumerate(pi_e):
+                            episode['target_propensity_%s' % i].append(pie.predict(im).tolist()[0])
+                else:
+                    action = 0
+                    # propensity = [1/N_acts]*N_acts
+                    # propensity[-1] = 1 - sum(propensity[:-1])
+                    # import pdb; pdb.set_trace()
+                    propensity = [1e-8] * N_acts
+                    propensity[action] += 1 - sum(propensity)
+                    episode['base_propensity'].append(propensity)
+                    if pi_e is not None:
+                        for k, pie in enumerate(pi_e):
+                            episode['target_propensity_%s' % k].append(propensity)
                 new_state, reward, done = absorbing_state, 0, True
                 true_state = new_state
 
@@ -480,18 +538,22 @@ def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, fr
                 if np.all(state == absorbing_state):
                     propensity = [1e-8] * N_acts
                     propensity[action] += 1 - sum(propensity)
-                    episode['extra_propensity'] = propensity
+                    for k, pie in enumerate(pi_e):
+                        episode['extra_propensity_%s' % k] = propensity
                 else:
                     im = process(np.array(frames)[np.newaxis, ...])
-                    episode['extra_propensity'] = pi_e.predict(im).tolist()[0]
+                    for k, pie in enumerate(pi_e):
+                        episode['extra_propensity_%s' % k] = pie.predict(im).tolist()[0]
             else:
                 if state == absorbing_state:
                     propensity = [1e-8] * N_acts
                     propensity[action] += 1 - sum(propensity)
-                    episode['extra_propensity'] = propensity
+                    for k, pie in enumerate(pi_e):
+                        episode['extra_propensity_%s' % k] = propensity
                 else:
                     im = process(np.array(frames)[np.newaxis, ...])
-                    episode['extra_propensity'] = pi_e.predict(im).tolist()[0]
+                    for k, pie in enumerate(pi_e):
+                        episode['extra_propensity_%s' % k] = pie.predict(im).tolist()[0]
         trajectories.append(episode)
 
         # with open(filename, 'w') as fout:
@@ -501,3 +563,4 @@ def rollout(env, pi_b, process, absorbing_state, pi_e = None, N=10000, T=200, fr
         except:
             as_int = False
     return Data(trajectories, env.n_actions, env.n_dim, as_int)
+

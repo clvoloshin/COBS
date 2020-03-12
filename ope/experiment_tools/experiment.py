@@ -43,6 +43,8 @@ from ope.models.tabular_model import TabularPolicy
 from ope.utls.get_Qs import getQs
 from ope.utls.rollout import rollout
 
+from ope.experiment_tools.config import Config
+
 def analysis(dic):
 
     divergence = -1
@@ -73,6 +75,97 @@ class Result(object):
     def __init__(self, cfg, result):
         self.cfg = cfg
         self.result = result
+
+class ResultSaver(object):
+    def __init__(self):
+        self.results = []
+
+    def __iter__(self):
+        return iter(self.results)
+
+    def add(self, result):
+        if not isinstance(result, Result):
+            raise
+        self.results.append(result)
+
+    def makedirs(self, path):
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+    def write_last(self, filepath):
+        self.makedirs(filepath)
+
+        result = self.results[-1]
+        current_path = os.path.join(filepath, str(result.cfg.num_traj))
+        current_path = os.path.join(current_path, str(result.cfg.seed))
+
+        result_path = os.path.join(current_path, 'result.txt')
+        cfg_path = os.path.join(current_path, 'cfg.txt')
+        self.makedirs(current_path)
+
+        with open(result_path, 'w') as json_file:
+            json.dump(result.result, json_file)
+
+        with open(cfg_path, 'w') as json_file:
+            json.dump(result.cfg._config, json_file)
+
+        pass
+
+    def save(self, filepath):
+        self.makedirs(filepath)
+
+        for result in self.results:
+
+            current_path = os.path.join(filepath, str(result.cfg.num_traj))
+            current_path = os.path.join(current_path, str(result.cfg.seed))
+            result_path = os.path.join(current_path, 'result.txt')
+            cfg_path = os.path.join(current_path, 'cfg.txt')
+            self.makedirs(current_path)
+
+            with open(result_path, 'w') as json_file:
+                json.dump(result.result, json_file)
+
+            with open(cfg_path, 'w') as json_file:
+                json.dump(result.cfg._config, json_file)
+
+            pass
+
+    def cartesian(self, x, y):
+        return np.transpose([np.tile(x, len(y)), np.repeat(y, len(x))])
+
+    def load(self, filepath, seeds, Ns, run_remaining=True):
+
+        all_experiments = np.array([[[N,y] for y in seeds[i]] for i,N in enumerate(Ns)])
+        all_experiments = set([tuple(x) for x in all_experiments.reshape(-1, 2).tolist()])
+
+        try:
+            directories = os.listdir(filepath)
+        except:
+            directories = []
+
+        for directory in directories:
+            if directory.startswith('.'): continue
+            path = os.path.join(filepath, directory)
+            for subdir in os.listdir(path):
+
+                key = tuple([int(directory), int(subdir)])
+                if key in all_experiments:
+                    all_experiments.remove(key)
+
+                current_path = os.path.join(path, subdir)
+
+                result_path = os.path.join(current_path, 'result.txt')
+                cfg_path = os.path.join(current_path, 'cfg.txt')
+
+                with open(result_path, 'r') as json_file:
+                    res = json.load(json_file)
+
+                with open(cfg_path, 'r') as json_file:
+                    cfg = json.load(json_file)
+
+                self.add(Result(Config(cfg), res))
+
+        return all_experiments if run_remaining else set()
 
 class ExperimentRunner(object):
     def __init__(self):

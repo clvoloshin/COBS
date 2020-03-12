@@ -325,7 +325,7 @@ class ApproxModel(object):
                     out_x_ = np.diff(self.processor(x_.reshape(tmp_shp)).squeeze(), axis=1)[:,[-1],...]
                     out_r = -r
                     out_done = done
-                if self.modeltype == 'conv1':
+                elif self.modeltype == 'conv1':
                     tmp_shp = np.hstack([len(batch_idxs),-1,shp[2:]])
                     inp = self.processor(x.reshape(tmp_shp).squeeze())
                     inp = inp[:,None,:,:]
