@@ -15,5 +15,5 @@ aiobotocore==0.11.0
 flow==0.0.1
 lib==3.0.0
 paramiko==2.7.1
-Pillow==6.2.1
+Pillow==8.2.0
 scikit_learn==0.22
