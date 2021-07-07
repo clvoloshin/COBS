@@ -1,5 +1,5 @@
-# OPE-tools
-OPE Tools based on Empirical Study of Off Policy Policy Estimation paper (https://arxiv.org/abs/1911.06854)
+# Caltech OPE Benchmarking Suite (COBS)
+COBS based on Empirical Study of Off Policy Policy Estimation paper (https://arxiv.org/abs/1911.06854)
 
 ## Installation
 
@@ -20,9 +20,9 @@ To run your own experiments, see example.py (or example2.py). Alternatively, you
 I'd like to make this repo as useful as possible for the community which means there's still a lot of work to be done in getting it to a modular, more package-like place. Help is kindly appreciated.
 
 
-## <a name="CitingOPETools"></a>Citing OPETools
+## <a name="CitingCOBS"></a>Citing COBS
 
-If you use OPETools, please use the following BibTeX entry.
+If you use COBS, please use the following BibTeX entry.
 
 ```
   @misc{voloshin2019empirical,
