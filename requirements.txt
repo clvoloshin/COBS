@@ -3,7 +3,7 @@ numpy
 scikit-image
 scikit-learn
 Cython
-tensorflow==1.15
+tensorflow==2.4.2
 PyVirtualDisplay
 scipy
 matplotlib
