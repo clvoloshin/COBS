@@ -88,7 +88,6 @@ class DoublyRobust_v2(object):
                     estimated_q_values_for_logged_action,
                 )
 
-        import pdb; pdb.set_trace()
         if return_Qs:
             return np.array(out).sum(), np.array(out)
         else:
