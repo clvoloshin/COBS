@@ -2,8 +2,8 @@ import sys
 import numpy as np
 import pandas as pd
 from functools import reduce
-from ope.models.basics import BasicPolicy, SingleTrajectory
-from ope.models.epsilon_greedy_policy import EGreedyPolicy
+from ope.policies.basics import BasicPolicy, SingleTrajectory
+from ope.policies.epsilon_greedy_policy import EGreedyPolicy
 from tqdm import tqdm
 import itertools
 
@@ -88,7 +88,6 @@ class DoublyRobust_v2(object):
                     estimated_q_values_for_logged_action,
                 )
 
-        import pdb; pdb.set_trace()
         if return_Qs:
             return np.array(out).sum(), np.array(out)
         else:

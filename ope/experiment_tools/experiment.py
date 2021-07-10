@@ -34,11 +34,11 @@ from ope.algos.more_robust_doubly_robust import MRDR
 from ope.algos.retrace_lambda import Retrace
 from ope.algos.approximate_model import ApproxModel
 
-from ope.models.basics import BasicPolicy
-from ope.models.epsilon_greedy_policy import EGreedyPolicy
-from ope.models.max_likelihood import MaxLikelihoodModel
-from ope.models.Q_wrapper import QWrapper
-from ope.models.tabular_model import TabularPolicy
+from ope.policies.basics import BasicPolicy
+from ope.policies.epsilon_greedy_policy import EGreedyPolicy
+from ope.policies.max_likelihood import MaxLikelihoodModel
+from ope.policies.Q_wrapper import QWrapper
+from ope.policies.tabular_model import TabularPolicy
 
 from ope.utls.get_Qs import getQs
 from ope.utls.rollout import rollout
@@ -265,91 +265,111 @@ class ExperimentRunner(object):
         print('V(pi_e): ',eval_data.value_of_data(gamma, False), 'V(pi_e) Normalized: ',eval_data.value_of_data(gamma, True))
 
         get_Qs = getQs(behavior_data, pi_e, processor, env.n_actions)
+        
+        if 'FQE' in cfg.models:
+            FQE = FittedQEvaluation()
+            FQE.fit_NN(behavior_data, pi_e, cfg)
+            FQE_Qs = QWrapper(FQE).get_Qs_from_data(behavior_data, cfg)
+            out = self.estimate(FQE_Qs, behavior_data, gamma, 'FQE', true)
+            dic.update(out)
+            
+        # FQE = FittedQEvaluation(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
 
-        for model in models:
-            if (model == 'MBased_Approx') or (model == 'MBased_MLE'):
-                if model == 'MBased_MLE':
-                    print('*'*20)
-                    print('MLE estimator not implemented for continuous state space. Using MBased_Approx instead')
-                    print('*'*20)
-                MBased_max_trajectory_length = 25
-                batchsize = 32
-                mbased_num_epochs = 100
-                MDPModel = ApproxModel(gamma, None, MBased_max_trajectory_length, frameskip, frameheight, processor, action_space_dim=env.n_actions)
-                mdpmodel = MDPModel.run(env, behavior_data, mbased_num_epochs, batchsize, Qmodel)
+        # fqe_max_epochs = 80
+        # _,_,fqe_Q = FQE.run_NN(env, pi_b, pi_e, fqe_max_epochs, epsilon=0.0001)
 
-                Qs_model_based = get_Qs.get(mdpmodel)
-                out = self.estimate(Qs_model_based, behavior_data, gamma,'MBased_Approx', true)
-                dic.update(out)
+        # fqe_model = QWrapper(fqe_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
+        # Qs_FQE_based = get_Qs.get(fqe_model)
 
-            elif model == 'MFree_Reg':
-                DMRegression = DirectMethodRegression(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
-                dm_max_epochs = 80
-                _,dm_model_Q = DMRegression.run_NN(env, pi_b, pi_e, dm_max_epochs, epsilon=0.001)
+        # out = self.estimate(Qs_FQE_based, behavior_data, gamma, 'FQE', true)
+        # dic.update(out)
 
-                dm_model = QWrapper(dm_model_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-                Qs_DM_based = get_Qs.get(dm_model)
+        # get_Qs = getQs(behavior_data, pi_e, processor, env.n_actions)
 
-                out = self.estimate(Qs_DM_based, behavior_data, gamma,'DM Regression', true)
-                dic.update(out)
-            elif model == 'MFree_FQE':
-                FQE = FittedQEvaluation(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
+        # for model in models:
+        #     if (model == 'MBased_Approx') or (model == 'MBased_MLE'):
+        #         if model == 'MBased_MLE':
+        #             print('*'*20)
+        #             print('MLE estimator not implemented for continuous state space. Using MBased_Approx instead')
+        #             print('*'*20)
+        #         MBased_max_trajectory_length = 25
+        #         batchsize = 32
+        #         mbased_num_epochs = 100
+        #         MDPModel = ApproxModel(gamma, None, MBased_max_trajectory_length, frameskip, frameheight, processor, action_space_dim=env.n_actions)
+        #         mdpmodel = MDPModel.run(env, behavior_data, mbased_num_epochs, batchsize, Qmodel)
 
-                fqe_max_epochs = 80
-                _,_,fqe_Q = FQE.run_NN(env, pi_b, pi_e, fqe_max_epochs, epsilon=0.0001)
+        #         Qs_model_based = get_Qs.get(mdpmodel)
+        #         out = self.estimate(Qs_model_based, behavior_data, gamma,'MBased_Approx', true)
+        #         dic.update(out)
 
-                fqe_model = QWrapper(fqe_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-                Qs_FQE_based = get_Qs.get(fqe_model)
+        #     elif model == 'MFree_Reg':
+        #         DMRegression = DirectMethodRegression(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
+        #         dm_max_epochs = 80
+        #         _,dm_model_Q = DMRegression.run_NN(env, pi_b, pi_e, dm_max_epochs, epsilon=0.001)
 
-                out = self.estimate(Qs_FQE_based, behavior_data, gamma, 'FQE', true)
-                dic.update(out)
-            elif model == 'MFree_IH':
-                ih_max_epochs = 1001
-                ih_matrix_size = 128
-                inf_horizon = IH(behavior_data, 30, 1e-3, 3e-3, gamma, False, Qmodel, processor=processor)
-                inf_hor_output = inf_horizon.evaluate(env, ih_max_epochs, ih_matrix_size)
-                inf_hor_output /= 1/np.sum(gamma ** np.arange(max(behavior_data.lengths())))
-                dic.update({'IH': [inf_hor_output, (inf_hor_output - true )**2]})
-            elif model == 'MFree_MRDR':
-                mrdr = MRDR(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
+        #         dm_model = QWrapper(dm_model_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
+        #         Qs_DM_based = get_Qs.get(dm_model)
 
-                mrdr_max_epochs = 80
-                mrdr_matrix_size = 1024
-                _,_,mrdr_Q = mrdr.run_NN(env, pi_b, pi_e, mrdr_max_epochs, mrdr_matrix_size, epsilon=0.001)
-                mrdr_model = QWrapper(mrdr_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-                Qs_mrdr_based = get_Qs.get(mrdr_model)
+        #         out = self.estimate(Qs_DM_based, behavior_data, gamma,'DM Regression', true)
+        #         dic.update(out)
+        #     elif model == 'MFree_FQE':
+        #         FQE = FittedQEvaluation(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
 
-                out = self.estimate(Qs_mrdr_based, behavior_data, gamma, 'MRDR', true)
-                dic.update(out)
-            elif model == 'MFree_Retrace_L':
-                retrace = Retrace(behavior_data, gamma, frameskip, frameheight, Qmodel, lamb=.9, processor=processor)
+        #         fqe_max_epochs = 80
+        #         _,_,fqe_Q = FQE.run_NN(env, pi_b, pi_e, fqe_max_epochs, epsilon=0.0001)
 
-                retrace_max_epochs = 80
-                _,_,retrace_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'retrace', epsilon=0.001)
-                retrace_model = QWrapper(retrace_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype) # use mlp-based wrapper even for linear
-                Qs_retrace_based = get_Qs.get(retrace_model)
-                out = self.estimate(Qs_retrace_based, behavior_data, gamma, 'Retrace(lambda)', true)
-                dic.update(out)
+        #         fqe_model = QWrapper(fqe_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
+        #         Qs_FQE_based = get_Qs.get(fqe_model)
 
-                _,_,tree_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'tree-backup', epsilon=0.001)
-                tree_model = QWrapper(tree_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-                Qs_tree_based = get_Qs.get(tree_model)
-                out = self.estimate(Qs_tree_based, behavior_data, gamma, 'Tree-Backup', true)
-                dic.update(out)
+        #         out = self.estimate(Qs_FQE_based, behavior_data, gamma, 'FQE', true)
+        #         dic.update(out)
+        #     elif model == 'MFree_IH':
+        #         ih_max_epochs = 1001
+        #         ih_matrix_size = 128
+        #         inf_horizon = IH(behavior_data, 30, 1e-3, 3e-3, gamma, False, Qmodel, processor=processor)
+        #         inf_hor_output = inf_horizon.evaluate(env, ih_max_epochs, ih_matrix_size)
+        #         inf_hor_output /= 1/np.sum(gamma ** np.arange(max(behavior_data.lengths())))
+        #         dic.update({'IH': [inf_hor_output, (inf_hor_output - true )**2]})
+        #     elif model == 'MFree_MRDR':
+        #         mrdr = MRDR(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
 
-                _,_,q_lambda_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'Q^pi(lambda)', epsilon=0.001)
-                q_lambda_model = QWrapper(q_lambda_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-                Qs_q_lambda_based = get_Qs.get(q_lambda_model)
-                out = self.estimate(Qs_q_lambda_based, behavior_data, gamma, 'Q^pi(lambda)', true)
-                dic.update(out)
+        #         mrdr_max_epochs = 80
+        #         mrdr_matrix_size = 1024
+        #         _,_,mrdr_Q = mrdr.run_NN(env, pi_b, pi_e, mrdr_max_epochs, mrdr_matrix_size, epsilon=0.001)
+        #         mrdr_model = QWrapper(mrdr_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
+        #         Qs_mrdr_based = get_Qs.get(mrdr_model)
 
-            elif model == 'IS':
-                out = self.estimate([], behavior_data, gamma, 'IS', true, True)
-                dic.update(out)
-            else:
-                print(model, ' is not a valid method')
+        #         out = self.estimate(Qs_mrdr_based, behavior_data, gamma, 'MRDR', true)
+        #         dic.update(out)
+        #     elif model == 'MFree_Retrace_L':
+        #         retrace = Retrace(behavior_data, gamma, frameskip, frameheight, Qmodel, lamb=.9, processor=processor)
 
-            analysis(dic)
+        #         retrace_max_epochs = 80
+        #         _,_,retrace_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'retrace', epsilon=0.001)
+        #         retrace_model = QWrapper(retrace_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype) # use mlp-based wrapper even for linear
+        #         Qs_retrace_based = get_Qs.get(retrace_model)
+        #         out = self.estimate(Qs_retrace_based, behavior_data, gamma, 'Retrace(lambda)', true)
+        #         dic.update(out)
+
+        #         _,_,tree_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'tree-backup', epsilon=0.001)
+        #         tree_model = QWrapper(tree_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
+        #         Qs_tree_based = get_Qs.get(tree_model)
+        #         out = self.estimate(Qs_tree_based, behavior_data, gamma, 'Tree-Backup', true)
+        #         dic.update(out)
+
+        #         _,_,q_lambda_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'Q^pi(lambda)', epsilon=0.001)
+        #         q_lambda_model = QWrapper(q_lambda_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
+        #         Qs_q_lambda_based = get_Qs.get(q_lambda_model)
+        #         out = self.estimate(Qs_q_lambda_based, behavior_data, gamma, 'Q^pi(lambda)', true)
+        #         dic.update(out)
+
+        #     elif model == 'IS':
+        #         out = self.estimate([], behavior_data, gamma, 'IS', true, True)
+        #         dic.update(out)
+        #     else:
+        #         print(model, ' is not a valid method')
+
+        #     analysis(dic)
 
         result = analysis(dic)
         self.results.append(Result(cfg, result))
