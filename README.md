@@ -1,24 +1,27 @@
 # Caltech OPE Benchmarking Suite (COBS)
-COBS based on Empirical Study of Off Policy Policy Estimation paper (https://arxiv.org/abs/1911.06854)
 
-## Installation
+## Introduction
 
-Please use Python 3.6+. 
+COBS is an Off-Policy Policy Evaluation (OPE) Benchmarking Suite. The goal is to provide fine experimental control to carefully tease out an OPE method's performance across many key conditions. 
+
+We'd like to make this repo as useful as possible for the community. We commit to continual refactoring and code-review to make sure the COBS continues to serve its purpose. Help is always appreciated!
+
+COBS is based on Empirical Study of Off Policy Policy Estimation paper (https://arxiv.org/abs/1911.06854)
+
+## Getting started
+
+### Tutorial
+
+To get started using the experimental tools see [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipynb)
+
+### Installation
+
+Tested on python3.6, python3.7.
 ```
-pip install -r requirements.txt
-pip install -e .
+python3.7 -m venv cobs-env
+source cobs-env/bin/activate
+pip3 install -r requirements.txt
 ```
-
-## Usage
-
-To replicate results in the paper, please see instructions in paper.py
-
-To run your own experiments, see example.py (or example2.py). Alternatively, you can modify paper.py to your use-case.
-
-## Goal
-
-I'd like to make this repo as useful as possible for the community which means there's still a lot of work to be done in getting it to a modular, more package-like place. Help is kindly appreciated.
-
 
 ## <a name="CitingCOBS"></a>Citing COBS
 
