@@ -19,7 +19,28 @@ from functools import partial
 
 
 class DirectMethodRegression(object):
+    """Algorithm: Direct Model Regression (Q-Reg).
+    """
     def __init__(self, data, gamma, frameskip=2, frameheight=2, modeltype = 'conv', processor=None):
+        """
+        Parameters
+        ----------
+        data : obj
+            The logging (historial) dataset.
+        gamma : float
+            Discount factor.
+        frameskip : int, optional, deprecated.
+            Deprecated.
+        frameheight : int, optional, deprecated.
+            Deprecated.
+        modeltype: str, optional
+            The type of model to represent the Q function.
+            Default: 'conv'
+        processor: function, optional
+            Receives state as input and converts it into a different form.
+            The new form becomes the input to the direct method.
+            Default: None
+        """
         self.data = data
         self.gamma = gamma
         self.frameskip = frameskip
@@ -30,6 +51,34 @@ class DirectMethodRegression(object):
         # self.setup(deepcopy(self.trajectories))
 
     def wls_sherman_morrison(self, phi_in, rewards_in, omega_in, lamb, omega_regularizer, cond_number_threshold_A, block_size=None):
+        """Weighted Least Squares via Sherman Morrison Algorithm.
+
+        Parameters
+        ----------
+        phi_in : ndarray
+            2D array containing data with float type. 
+            Feature vector phi(state, action).
+        rewards_in : list
+            1D list containing data with float type. 
+            Discounted reward to go.
+        omega_in : list
+            1D list containing data with float type. 
+            Distribution correction factors.
+        lamb : float
+            Deprecated
+        omega_regularizer : float
+            Additive regularization for correction factors.
+        cond_number_threshold_A : float
+            Deprecated.
+        block_size : int, optional
+            Deprecated.
+        
+        Returns
+        -------
+        list
+            Weights representing the linear model weights^T * features.
+        """
+        
         # omega_in_2 = block_diag(*omega_in)
         # omega_in_2 += omega_regularizer * np.eye(len(omega_in_2))
         # Aw = phi_in.T.dot(omega_in_2).dot(phi_in)
@@ -83,7 +132,22 @@ class DirectMethodRegression(object):
         return weight
 
     def run(self, pi_b, pi_e, epsilon=0.001):
+        """(Tabular) Get the Q-Reg OPE Q function for pi_e via weighted least squares.
 
+        Parameters
+        ----------
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        epsilon : float
+            Deprecated.
+        
+        Returns
+        -------
+        obj, DMModel
+            An object representing the Q function
+        """
 
         dataset = self.data.all_transitions()
         frames = self.data.frames()
@@ -107,16 +171,33 @@ class DirectMethodRegression(object):
         self.cond_number_threshold_A = 1
         block_size = len(dataset)
 
-
-
         phi = self.compute_grid_features()
         self.weight = self.wls_sherman_morrison(phi, Rs, factors, self.lamb, self.alpha, self.cond_number_threshold_A, block_size)
 
         return DMModel(self.weight,
-                        self.data)
+                        self.data,
+                        self.compute_feature)
 
 
-    def compute_feature_without_time(self, state, action, step):
+    def compute_feature(self, state, action, step):
+        """Feature map. One hot encoding of state-action.
+
+        Parameters
+        ----------
+        state : int
+            State.
+        action: int
+            Action.
+        step : int
+            Deprecated.
+        
+        Returns
+        -------
+        list
+            One hot encoding of the state-action that was taken.
+            phi[state, action] = 1 otherwise 0.
+        """
+
         T = max(self.data.lengths())
         n_dim = self.data.n_dim
         n_actions = self.data.n_actions
@@ -135,12 +216,19 @@ class DirectMethodRegression(object):
 
         return phi
 
-
-    def compute_feature(self, state, action, step):
-        return self.compute_feature_without_time(state, action, step)
-
-
     def compute_grid_features(self):
+        """Get features for the dataset.
+
+        Parameters
+        ----------
+        None
+        
+        Returns
+        -------
+        ndarray
+            2D array containing data with float type. 
+            Each row represents the feature phi(state, action)
+        """
 
         T = max(self.data.lengths())
         n_dim = self.data.n_dim
@@ -169,12 +257,31 @@ class DirectMethodRegression(object):
 
         return np.array(phi, dtype='float')
 
-
-
-
     @staticmethod
     def build_model(input_size, scope, action_space_dim=3, modeltype='conv'):
+        """Build NN Q function.
 
+        Parameters
+        ----------
+        input_size : ndarray
+            (# Channels, # Height, # Width)
+        scope: str
+            Name for the NN
+        action_space_dim : int, optional
+            Action space cardinality. 
+            Default: 3
+        modeltype : str, optional
+            The model type to be built.
+            Default: 'conv'
+        
+        Returns
+        -------
+        obj1, obj2, obj3
+            obj1: Compiled model with weighted loss
+            obj2: Forward model Q(s,a) -> R
+            obj3: Forward model Q(s) -> R^|A| 
+        """
+        
         inp = keras.layers.Input(input_size, name='frames')
         actions = keras.layers.Input((action_space_dim,), name='mask')
         factors = keras.layers.Input((1,), name='weights')
@@ -258,6 +365,8 @@ class DirectMethodRegression(object):
 
     @staticmethod
     def copy_over_to(source, target):
+        """Copy source NN weights to target NN weights.
+        """
         target.set_weights(source.get_weights())
 
     @staticmethod
@@ -275,7 +384,27 @@ class DirectMethodRegression(object):
         return sum(norm_list)*1.0/len(norm_list)
 
     def run_linear(self, env, pi_b, pi_e, max_epochs, epsilon=.001):
+        """(Linear) Get the Q-Reg OPE estimate for pi_e via weighted least squares.
 
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        max_epochs : int
+            Max number of iterations
+        epsilon : float
+            Convergence criteria.
+            Default: 0.001
+        
+        Returns
+        -------
+        obj
+            sklearn LinearReg object representing the Q function
+        """
         self.Q_k = LinearRegression()
 
         states = self.data.states()
@@ -306,7 +435,27 @@ class DirectMethodRegression(object):
 
 
     def run_NN(self, env, pi_b, pi_e, max_epochs, epsilon=0.001):
+        """(Neural) Get the Q-Reg OPE estimate for pi_e via weighted least squares.
 
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        max_epochs : int
+            Maximum number of NN epochs to run
+        epsilon : float, optional
+            Default: 0.001
+        
+        Returns
+        -------
+        obj1, obj2
+            obj1: Fitted Forward model Q(s,a) -> R
+            obj2: Fitted Forward model Q(s) -> R^|A| 
+        """
         self.dim_of_actions = env.n_actions
         self.Q_k = None
         self.Q_k_minus_1 = None
@@ -355,6 +504,31 @@ class DirectMethodRegression(object):
 
     @threadsafe_generator
     def generator(self, env, pi_e, all_idxs, fixed_permutation=False,  batch_size = 64, is_train=True):
+        """Data Generator for fitting Q-Reg model
+
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_e: obj
+            A policy object, evaluation policy.
+        all_idxs : ndarray
+            1D array of ints representing valid datapoints from which we generate examples
+        fixed_permutation : bool, optional
+            Run through the data the same way every time?
+            Default: False
+        batch_size : int
+            Minibatch size to during training
+        is_train : bool
+            Deprecated 
+
+        
+        Yield
+        -------
+        obj1, obj2
+            obj1: [state, action, weight]
+            obj2: [reward]
+        """
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))
 
@@ -427,12 +601,39 @@ class DirectMethodRegression(object):
 
 
 class DMModel(object):
-    def __init__(self, weights, data):
+    """Direct Model Regression (Q-Reg) Tabular Model
+    """
+    def __init__(self, weights, data, feature_map):
+        """
+        Parameters
+        ----------
+        weights : ndarray
+            1D array of weights
+        data : obj
+            The logging (historial) dataset.
+        compute_feature : function
+            computes feature from state, action
+        """
         self.weights = weights
         self.data = data
+        self.compute_feature = feature_map
 
     def predict(self, x):
+        """Get Q-Reg Q value for state, action.
+
+        Parameters
+        ----------
+        x : ndarray
+            2D array of the form [[state, -- 1 hot action --],...]
+        
+        Returns
+        -------
+        ndarray
+            Q(state, action) for each state,action in the input
+        """
+        
         if (self.data.n_dim + self.data.n_actions) == x.shape[1]:
+            
             acts = np.argmax(x[:,-self.data.n_actions:], axis=1)
             S = x[:,:self.data.n_dim]
 
@@ -454,34 +655,3 @@ class DMModel(object):
             return Q
         else:
             raise
-
-    def compute_feature_without_time(self, state, action, step):
-        T = max(self.data.lengths())
-        n_dim = self.data.n_dim
-        n_actions = self.data.n_actions
-
-        # feature_dim = n_dim * n_actions
-        # phi = np.zeros(feature_dim)
-        # # for k in range(step, T):
-        # #     phi[state * n_actions + action] = env.gamma_vec[k - step]
-        # # phi = np.hstack([np.eye(n_dim)[int(state)] , np.eye(n_actions)[action] ])
-        # # phi[action*n_dim: (action+1)*n_dim] = 1 #state + 1
-
-        # phi[int(state*n_actions + action)] = 1
-        phi = np.zeros((n_dim, n_actions))
-        # for k in range(step, T):
-        #     phi[state * n_actions + action] = env.gamma_vec[k - step]
-
-        # phi = np.hstack([np.eye(n_dim)[int(state)] , np.eye(n_actions)[action] ])
-        # phi[action*n_dim: (action+1)*n_dim] = state + 1
-        # phi[int(state*n_actions + action)] = 1
-        phi[int(state), int(action)] = 1
-        phi = phi.reshape(-1)
-
-        return phi
-
-
-    def compute_feature(self, state, action, step):
-        return self.compute_feature_without_time(state, action, step)
-
-

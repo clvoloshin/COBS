@@ -15,7 +15,28 @@ from keras import regularizers
 from sklearn.linear_model import LinearRegression, LogisticRegression
 
 class MRDR(object):
+    """Algorithm: More Robust Doubly Robust (MRDR).
+    """
     def __init__(self, data, gamma, frameskip=2, frameheight=2, modeltype = 'conv', processor=None):
+        """
+        Parameters
+        ----------
+        data : obj
+            The logging (historial) dataset.
+        gamma : float
+            Discount factor.
+        frameskip : int, optional, deprecated.
+            Deprecated.
+        frameheight : int, optional, deprecated.
+            Deprecated.
+        modeltype: str, optional
+            The type of model to represent the Q function.
+            Default: 'conv'
+        processor: function, optional
+            Receives state as input and converts it into a different form.
+            The new form becomes the input to the direct method.
+            Default: None
+        """
         self.data = data
         self.gamma = gamma
         self.frameskip = frameskip
@@ -94,6 +115,27 @@ class MRDR(object):
         self.sess.run(self.init)
 
     def build_model(self, input_size, scope, action_space_dim=3, modeltype='conv'):
+        """Build NN Q function.
+
+        Parameters
+        ----------
+        input_size : ndarray
+            (# Channels, # Height, # Width)
+        scope: str
+            Name for the NN
+        action_space_dim : int, optional
+            Action space cardinality. 
+            Default: 3
+        modeltype : str, optional
+            The model type to be built.
+            Default: 'conv'
+        
+        Returns
+        -------
+        obj1, obj2
+            obj1: Compiled model
+            obj2: Forward model Q(s) -> R^|A| 
+        """
         inp = keras.layers.Input(input_size, name='frames')
         actions = keras.layers.Input((action_space_dim,), name='mask')
         weights = keras.layers.Input((1,), name='weights')
@@ -241,6 +283,30 @@ class MRDR(object):
         return [],[],self
 
     def run_NN(self, env, pi_b, pi_e, max_epochs, batch_size, epsilon=0.001):
+        """(Neural) Get the MRDR OPE estimate for pi_e.
+
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        max_epochs : int
+            Maximum number of NN epochs to run
+        batch_size: int
+            Batch size for the quad program
+        epsilon : float, optional
+            Default: 0.001
+        
+        Returns
+        -------
+        float, obj1, obj2
+            float: represents the average value of the final 10 iterations
+            obj1: Fitted Forward model Q(s,a) -> R
+            obj2: Fitted Forward model Q(s) -> R^|A| 
+        """
 
         initial_states = self.data.initial_states()
         self.dim_of_actions = env.n_actions
@@ -296,6 +362,31 @@ class MRDR(object):
 
     @threadsafe_generator
     def generator(self, env, pi_e, all_idxs, fixed_permutation=False,  batch_size = 64, is_train=True):
+        """Data Generator for fitting FQE model
+
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_e: obj
+            A policy object, evaluation policy.
+        all_idxs : ndarray
+            1D array of ints representing valid datapoints from which we generate examples
+        fixed_permutation : bool, optional
+            Run through the data the same way every time?
+            Default: False
+        batch_size : int
+            Minibatch size to during training
+        is_train : bool
+            Deprecated 
+
+        
+        Yield
+        -------
+        obj1, obj2
+            obj1: [state, actions, weights, rewards, base propensities, target propensities]
+            obj2: []
+        """
         # dataset, frames = dataset
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))
@@ -405,6 +496,18 @@ class MRDR(object):
                 yield ([x, acts, weights, rs, pib, pie], [])
 
     def run(self, pi_e):
+        """(Tabular) Get the MRDR OPE Q function for pi_e.
+
+        Parameters
+        ----------
+        pi_e: obj
+            A policy object, evaluation policy.
+        
+        Returns
+        -------
+        obj
+            obj: Returns itself equipped with a predict function
+        """
 
         n = len(self.data)
         T = max(self.data.lengths())
@@ -466,7 +569,27 @@ class MRDR(object):
         return self
 
 
-    def compute_feature_without_time(self, state, action, step):
+    def compute_feature(self, state, action, step):
+        """Feature map. 
+
+        Parameters
+        ----------
+        state : int
+            State.
+        action: int
+            Action.
+        step : int
+            Deprecated.
+        
+        Returns
+        -------
+        ndarray
+            If modeltype is Tabular:
+                One hot encoding of the state-action that was taken.
+                phi[state, action] = 1 otherwise 0.
+            If modeltype is Linear:
+                phi[state, action] = state
+        """
         T = max(self.data.lengths())
         n_dim = self.data.n_dim
         n_actions = self.data.n_actions
@@ -482,11 +605,20 @@ class MRDR(object):
 
         return phi
 
-    def compute_feature(self, state, action, step):
-        return self.compute_feature_without_time(state, action, step)
-
-
     def compute_grid_features(self, pi_e):
+        """Get features for the dataset.
+
+        Parameters
+        ----------
+        pi_e: obj
+            A policy object, evaluation policy.
+        
+        Returns
+        -------
+        ndarray
+            2D array containing data with float type. 
+            Each row represents the feature phi(state, action)
+        """
 
         n = len(self.data)
         T = max(self.data.lengths())
@@ -514,6 +646,33 @@ class MRDR(object):
         return np.array(phi, dtype='float')
 
     def wls_sherman_morrison(self, phi_in, rewards_in, omega_in, lamb, omega_regularizer, cond_number_threshold_A, block_size=None):
+        """Weighted Least Squares via Sherman Morrison Algorithm.
+
+        Parameters
+        ----------
+        phi_in : ndarray
+            2D array containing data with float type. 
+            Feature vector phi(state, action).
+        rewards_in : list
+            1D list containing data with float type. 
+            Discounted reward to go.
+        omega_in : list
+            1D list containing data with float type. 
+            Distribution correction factors.
+        lamb : float
+            Deprecated
+        omega_regularizer : float
+            Additive regularization for correction factors.
+        cond_number_threshold_A : float
+            Deprecated.
+        block_size : int, optional
+            Deprecated.
+        
+        Returns
+        -------
+        list
+            Weights representing the linear model weights^T * features.
+        """
         # omega_in_2 = block_diag(*omega_in)
         # omega_in_2 += omega_regularizer * np.eye(len(omega_in_2))
         # Aw = phi_in.T.dot(omega_in_2).dot(phi_in)
@@ -567,6 +726,18 @@ class MRDR(object):
         return weight
 
     def predict(self, x):
+        """Get MRDR Q value for state, action.
+
+        Parameters
+        ----------
+        x : ndarray
+            State-action
+        
+        Returns
+        -------
+        ndarray
+            Q(state, action)
+        """
         if (self.data.n_dim + self.data.n_actions) == x.shape[1]:
             acts = np.argmax(x[:,-self.data.n_actions:], axis=1)
             S = x[:,:self.data.n_dim]

@@ -4,10 +4,30 @@ from typing import List
 import numpy as np
 
 class SeqDoublyRobust(object):
+    """Algorithm: Sequential Doubly Robust (DR).
+    """
     def __init__(self, gamma):
+        """
+        Parameters
+        ----------
+        gamma : float
+            Discount factor.
+        """
         self.gamma = gamma
 
     def evaluate(self, info):
+        """Get Seq-DR estimate from Q + IPS.
+
+        Parameters
+        ----------
+        info : list
+            [list of actions, list of rewards, list of base propensity, list of target propensity, list of Qhat]
+        
+        Returns
+        -------
+        list
+            [Seq-DR estimate, normalized estimate]
+        """
 
         (actions,
         rewards,

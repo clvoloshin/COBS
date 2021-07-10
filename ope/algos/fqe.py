@@ -16,6 +16,8 @@ from sklearn.linear_model import LinearRegression, LogisticRegression
 from collections import Counter
 
 class DataHolder(object):
+    """Data Structure to hold a transition of data.
+    """
     def __init__(self, s, a, r, s_, d, policy_action, original_shape):
         self.states = s
         self.next_states = s_
@@ -27,7 +29,28 @@ class DataHolder(object):
 
 
 class FittedQEvaluation(object):
+    """Algorithm: Fitted Q Evaluation (FQE).
+    """
     def __init__(self, data, gamma, frameskip=2, frameheight=2, modeltype = 'conv', processor=None):
+        """
+        Parameters
+        ----------
+        data : obj
+            The logging (historial) dataset.
+        gamma : float
+            Discount factor.
+        frameskip : int, optional, deprecated.
+            Deprecated.
+        frameheight : int, optional, deprecated.
+            Deprecated.
+        modeltype: str, optional
+            The type of model to represent the Q function.
+            Default: 'conv'
+        processor: function, optional
+            Receives state as input and converts it into a different form.
+            The new form becomes the input to the direct method.
+            Default: None
+        """
         self.data = data
         self.gamma = gamma
         self.frameskip = frameskip
@@ -136,6 +159,31 @@ class FittedQEvaluation(object):
         self.R1 = rew
 
     def run(self, pi_b, pi_e, epsilon=0.001, max_epochs=10000, verbose = True):
+        """(Tabular) Get the FQE OPE Q function for pi_e.
+
+        Parameters
+        ----------
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        epsilon : float, optional
+            Convergence criteria.
+            Default: 0.001
+        max_epochs : int, optional
+            Max number of iterations
+            Default: 10000
+        verbose: bool, optional
+            Print diagnostics
+            Default: True
+        
+        Returns
+        -------
+        obj1, obj2, obj3
+            obj1: None
+            obj2: 2D ndarray Q table. Q[map(s),a]
+            obj3: dic, maps state to row in the Q table
+        """
 
         data = self.data.basic_transitions()
 
@@ -197,6 +245,27 @@ class FittedQEvaluation(object):
 
     @staticmethod
     def build_model(input_size, scope, action_space_dim=3, modeltype='conv'):
+        """Build NN Q function.
+
+        Parameters
+        ----------
+        input_size : ndarray
+            (# Channels, # Height, # Width)
+        scope: str
+            Name for the NN
+        action_space_dim : int, optional
+            Action space cardinality. 
+            Default: 3
+        modeltype : str, optional
+            The model type to be built.
+            Default: 'conv'
+        
+        Returns
+        -------
+        obj1, obj2
+            obj1: Compiled model
+            obj2: Forward model Q(s) -> R^|A| 
+        """
 
         inp = keras.layers.Input(input_size, name='frames')
         actions = keras.layers.Input((action_space_dim,), name='mask')
@@ -280,6 +349,30 @@ class FittedQEvaluation(object):
         return sum(norm_list)*1.0/len(norm_list)
 
     def run_linear(self, env, pi_b, pi_e, max_epochs, epsilon=.001, fit_intercept=True):
+        """(Linear) Get the FQE OPE estimate.
+
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        max_epochs : int
+            Max number of iterations
+        epsilon : float
+            Convergence criteria.
+            Default: 0.001
+        fit_intercept : bool
+            Fit the y-intercept
+            Default: True
+        
+        Returns
+        -------
+        obj
+            sklearn LinearReg object representing the Q function
+        """
         initial_states = self.data.initial_states()
         self.Q_k = LinearRegression(fit_intercept=fit_intercept)
         values = []
@@ -378,7 +471,31 @@ class FittedQEvaluation(object):
 
 
     def run_NN(self, env, pi_b, pi_e, max_epochs, epsilon=0.001, perc_of_dataset = 1.):
+        """(Neural) Get the FQE OPE Q model for pi_e.
 
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        max_epochs : int
+            Maximum number of NN epochs to run
+        epsilon : float, optional
+            Default: 0.001
+        perc_of_dataset : float, optional
+            How much of the dataset to use for training
+            Default: 1.
+
+        Returns
+        -------
+        float, obj1, obj2
+            float: represents the average value of the final 10 iterations
+            obj1: Fitted Forward model Q(s,a) -> R
+            obj2: Fitted Forward model Q(s) -> R^|A| 
+        """
         initial_states = self.data.initial_states()
         if self.processor: initial_states = self.processor(initial_states)
         self.dim_of_actions = env.n_actions
@@ -503,6 +620,29 @@ class FittedQEvaluation(object):
 
     @threadsafe_generator
     def generator(self, env, pi_e, all_idxs, fixed_permutation=False,  batch_size = 64):
+        """Data Generator for fitting FQE model
+
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_e: obj
+            A policy object, evaluation policy.
+        all_idxs : ndarray
+            1D array of ints representing valid datapoints from which we generate examples
+        fixed_permutation : bool, optional
+            Run through the data the same way every time?
+            Default: False
+        batch_size : int
+            Minibatch size to during training
+
+        
+        Yield
+        -------
+        obj1, obj2
+            obj1: [state, action]
+            obj2: [Q]
+        """
         # dataset, frames = dataset
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))

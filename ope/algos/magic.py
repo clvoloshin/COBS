@@ -6,16 +6,44 @@ import scipy as sp
 
 
 class MAGIC(object):
+    """Algorithm: MAGIC.
+    """
     NUM_SUBSETS_FOR_CB_ESTIMATES = 25
     CONFIDENCE_INTERVAL = 0.9
     NUM_BOOTSTRAP_SAMPLES = 50
     BOOTSTRAP_SAMPLE_PCT = 0.5
 
     def __init__(self, gamma):
+        """
+        Parameters
+        ----------
+        gamma : float
+            Discount factor.
+        """
         self.gamma = gamma
 
     def evaluate(self, info, num_j_steps, is_wdr, return_Qs = False):
+        """Get MAGIC estimate from Q + IPS.
 
+        Parameters
+        ----------
+        info : list
+            [list of actions, list of rewards, list of base propensity, list of target propensity, list of Qhat]
+        num_j_steps : int
+            Parameter to MAGIC algorithm
+        is_wdr : bool
+            Use Weighted Doubly Robust?
+        return_Qs : bool
+            Return trajectory-wise estimate alongside full DR estimate?
+            Default: False
+        
+        Returns
+        -------
+        list
+            [MAGIC estimate, normalized MAGIC, std error, normalized std error]
+
+            If return_Qs is true, also returns trajectory-wise estimate
+        """
 
         (actions,
         rewards,

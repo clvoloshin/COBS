@@ -33,8 +33,8 @@ from ope.algos.infinite_horizon import InfiniteHorizonOPE as IH
 from ope.algos.dm_regression import DirectMethodRegression
 from ope.algos.more_robust_doubly_robust import MRDR
 from ope.algos.retrace_lambda import Retrace
+from ope.algos.approximate_model import ApproxModel
 
-from ope.models.approximate_model import ApproxModel
 from ope.models.basics import BasicPolicy
 from ope.models.epsilon_greedy_policy import EGreedyPolicy
 from ope.models.max_likelihood import MaxLikelihoodModel

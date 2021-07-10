@@ -3,10 +3,36 @@ import numpy as np
 import itertools
 
 class AverageModel(object):
+    """Algorithm: Average Model (AM). 
+
+    This is the direct-method estimate provided Q values given by any particular algorithm.
+    """
     def __init__(self, gamma):
+        """
+        Parameters
+        ----------
+        gamma : float
+            Discount factor.
+        """
         self.gamma = gamma
 
     def evaluate(self, info, return_Qs=False):
+        """Get DR estimate from Q + IPS.
+
+        Parameters
+        ----------
+        info : list
+            [list of actions, list of rewards, list of base propensity, list of target propensity, list of Qhat]
+        return_Qs : bool
+            Return trajectory-wise estimate alongside full DR estimate? 
+        
+        Returns
+        -------
+        float
+            AM estimate/ DM estimate
+
+            If return_Qs is true, also returns trajectory-wise estimate
+        """
         (actions,
         rewards,
         base_propensity,

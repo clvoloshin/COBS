@@ -26,14 +26,39 @@ from keras import regularizers
 #initial_stddev = 0.5
 
 #Training Parameter
-training_batch_size = 1024 #1024 * 2**2
-training_maximum_iteration = 40001
-TEST_NUM = 0
-NUMBER_OF_REPEATS = 1
+# training_batch_size = 1024 #1024 * 2**2
+# training_maximum_iteration = 40001
+# TEST_NUM = 0
+# NUMBER_OF_REPEATS = 1
 
 class InfiniteHorizonOPE(object):
+    """Algorithm: Infinite Horizon (IH).
+    """
     def __init__(self, data, w_hidden, Learning_rate, reg_weight, gamma, discrete, modeltype, env=None, processor=None):
-
+        """
+        Parameters
+        ----------
+        data : obj
+            The logging (historial) dataset.
+        w_hidden : int
+            Deprecated.
+        Learning_rate : float
+            Deprecated.
+        reg_weight : float
+            Deprecated.
+        gamma: float
+            Discount factor. Should be between 0 and 1.
+        discrete: bool
+            Tabular or not
+        modeltype: str
+            The type of model to represent the Q function.
+        env: obj, optional
+            The environment object
+        processor: function, optional
+            Receives state as input and converts it into a different form.
+            The new form becomes the input to the direct method.
+            Default: None
+        """
         self.data = data
         self.modeltype = modeltype
         self.gamma = gamma
@@ -51,6 +76,27 @@ class InfiniteHorizonOPE(object):
             pass
 
     def build_model(self, input_size, scope, action_space_dim=3, modeltype='conv'):
+        """Build NN Q function.
+
+        Parameters
+        ----------
+        input_size : ndarray
+            (# Channels, # Height, # Width)
+        scope: str
+            Name for the NN
+        action_space_dim : int, optional
+            Action space cardinality. 
+            Default: 3
+        modeltype : str, optional
+            The model type to be built.
+            Default: 'conv'
+        
+        Returns
+        -------
+        obj1, obj2
+            obj1: Compiled model
+            obj2: Forward model W(s) -> R^|A|, weights 
+        """
         isStart = keras.layers.Input(shape=(1,), name='dummy')
         state =  keras.layers.Input(shape=input_size, name='state')
         next_state =  keras.layers.Input(shape=input_size, name='next_state')
@@ -141,7 +187,27 @@ class InfiniteHorizonOPE(object):
 
 
     def run_NN(self, env, max_epochs, batch_size, epsilon=0.001, modeltype_overwrite =None):
+        """(Neural) Get the IH OPE W model for pi_e.
 
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        max_epochs : int
+            Maximum number of NN epochs to run
+        batch_size : int
+            Minibatch size to during training
+        epsilon : float, optional
+            Default: 0.001
+        modeltype_overwrite : str, optional
+            Overwrite default model
+            Default: None
+
+        Returns
+        -------
+        obj
+            obj: Weights W(s) -> R^|A| 
+        """
         self.dim_of_actions = env.n_actions
         self.Q_k = None
 
@@ -204,6 +270,27 @@ class InfiniteHorizonOPE(object):
 
     @threadsafe_generator
     def generator(self, env, all_idxs, fixed_permutation=False,  batch_size = 64):
+        """Data Generator for fitting FQE model
+
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        all_idxs : ndarray
+            1D array of ints representing valid datapoints from which we generate examples
+        fixed_permutation : bool, optional
+            Run through the data the same way every time?
+            Default: False
+        batch_size : int
+            Minibatch size to during training
+
+        
+        Yield
+        -------
+        obj1, obj2
+            obj1: [state, action, policy ratio, isStart, median distance for kernel]
+            obj2: []
+        """
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))
 
@@ -289,6 +376,23 @@ class InfiniteHorizonOPE(object):
 
 
     def evaluate(self, env, max_epochs, matrix_size):
+        """(Linear/Neural) Return the IH OPE estimate for pi_e with respect to the data
+
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        max_epochs : int
+            Maximum number of NN epochs to run
+        matrix_size: int
+            Minibatch size
+
+        Returns
+        -------
+        float
+            IH OPE estimate
+        """
+
         dataset = self.data
         if self.is_discrete:
 

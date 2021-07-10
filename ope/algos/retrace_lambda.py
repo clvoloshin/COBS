@@ -16,7 +16,34 @@ from sklearn.linear_model import LinearRegression, LogisticRegression
 
 
 class Retrace(object):
+    """Algorithm: Retrace Family (Retrace(lambda), Q(lambda), Tree-Backup(lambda)).
+    """
     def __init__(self, data, gamma, frameskip=1, frameheight=1, modeltype='linear', lamb=1., processor=None, max_iters=500):
+        """
+        Parameters
+        ----------
+        data : obj
+            The logging (historial) dataset.
+        gamma : float
+            Discount factor.
+        frameskip : int, optional, deprecated.
+            Deprecated.
+        frameheight : int, optional, deprecated.
+            Deprecated.
+        modeltype: str, optional
+            The type of model to represent the Q function.
+            Default: 'linear'
+        lamb : float, optional
+            Float between 0 and 1 representing the coefficient lambda in the algorithm
+            Default: 1.0
+        processor: function, optional
+            Receives state as input and converts it into a different form.
+            The new form becomes the input to the direct method.
+            Default: None
+        max_iters: int, optional
+            Maximum number of iterations in the algorithm.
+            Default: 500
+        """
         self.data = data
         self.gamma = gamma
         self.lamb = lamb
@@ -28,6 +55,36 @@ class Retrace(object):
 
 
     def run(self, pi_b, pi_e, method, epsilon=0.001, lamb=None, verbose=True, diverging_epsilon=1000):
+        """(Tabular) Get the FQE OPE Q function for pi_e.
+
+        Parameters
+        ----------
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        method : str
+            One of 'retrace', 'tree-backup','Q^pi(lambda)', 'IS'
+        epsilon : float, optional
+            Convergence criteria.
+            Default: 0.001
+        lamb : float, optional
+            Float between 0 and 1 representing the coefficient lambda in the algorithm
+            Default: None
+        verbose: bool
+            Print diagnostics
+            Default: True
+        diverging_epsilon : int
+            Threshold above which algorithm terminates due to divergence
+            Default: 1000
+        
+        Returns
+        -------
+        float, obj2, obj3
+            float: OPE Estimate
+            obj2: 2D ndarray Q table. Q[map(s),a]
+            obj3: dic, maps state to row in the Q table
+        """
         lamb = lamb if lamb is not None else self.lamb
         assert method in ['retrace','tree-backup','Q^pi(lambda)','IS']
 
@@ -116,6 +173,27 @@ class Retrace(object):
 
     @staticmethod
     def build_model(input_size, scope, action_space_dim=3, modeltype='conv'):
+        """Build NN Q function.
+
+        Parameters
+        ----------
+        input_size : ndarray
+            (# Channels, # Height, # Width)
+        scope: str
+            Name for the NN
+        action_space_dim : int, optional
+            Action space cardinality. 
+            Default: 3
+        modeltype : str, optional
+            The model type to be built.
+            Default: 'conv'
+        
+        Returns
+        -------
+        obj1, obj2
+            obj1: Compiled model
+            obj2: Forward model Q(s) -> R^|A| 
+        """
 
         inp = keras.layers.Input(input_size, name='frames')
         actions = keras.layers.Input((action_space_dim,), name='mask')
@@ -259,7 +337,30 @@ class Retrace(object):
 
 
     def run_NN(self, env, pi_b, pi_e, max_epochs, method, epsilon=0.001):
+        """(Neural) Get the Retrace/Tree/Q^pi OPE Q model for pi_e.
 
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
+        max_epochs : int
+            Maximum number of NN epochs to run
+        method : str
+            One of 'retrace', 'tree-backup','Q^pi(lambda)', 'IS'
+        epsilon : float, optional
+            Default: 0.001
+        
+        Returns
+        -------
+        float, obj1, obj2
+            float: represents the average value of the final 10 iterations
+            obj1: Fitted Forward model Q(s,a) -> R
+            obj2: Fitted Forward model Q(s) -> R^|A| 
+        """
         initial_states = self.data.initial_states()
         if self.processor: initial_states = self.processor(initial_states)
         self.dim_of_actions = env.n_actions
@@ -349,6 +450,33 @@ class Retrace(object):
 
     @threadsafe_generator
     def generator(self, env, pi_e, all_idxs, method, fixed_permutation=False,  batch_size = 64):
+        """Data Generator for fitting FQE model
+
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        pi_e: obj
+            A policy object, evaluation policy.
+        all_idxs : ndarray
+            1D array of ints representing valid datapoints from which we generate examples
+        method : str
+            One of 'retrace', 'tree-backup','Q^pi(lambda)', 'IS'
+        fixed_permutation : bool, optional
+            Run through the data the same way every time?
+            Default: False
+        batch_size : int, optional
+            Minibatch size to during training
+            Default: 64
+
+        
+        Yield
+        -------
+        obj1, obj2
+            obj1: [state, action]
+            obj2: [Q]
+        """
+
         # dataset, frames = dataset
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))

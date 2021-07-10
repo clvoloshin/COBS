@@ -8,12 +8,37 @@ from tqdm import tqdm
 import itertools
 
 class DoublyRobust_v2(object):
+    """Algorithm: Doubly Robust (DR).
+    """
     def __init__(self, gamma):
+        """
+        Parameters
+        ----------
+        gamma : float
+            Discount factor.
+        """
         self.gamma = gamma
 
     def evaluate(self, info, is_wdr=False, return_Qs=False):
+        """Get DR estimate from Q + IPS.
 
+        Parameters
+        ----------
+        info : list
+            [list of actions, list of rewards, list of base propensity, list of target propensity, list of Qhat]
+        is_wdr : bool
+            Use Weighted Doubly Robust?
+        return_Qs : bool
+            Return trajectory-wise estimate alongside full DR estimate? 
+        
+        Returns
+        -------
+        float
+            DR estimate
 
+            If return_Qs is true, also returns trajectory-wise estimate
+        """
+        
         (actions,
         rewards,
         base_propensity,
@@ -63,6 +88,7 @@ class DoublyRobust_v2(object):
                     estimated_q_values_for_logged_action,
                 )
 
+        import pdb; pdb.set_trace()
         if return_Qs:
             return np.array(out).sum(), np.array(out)
         else:
