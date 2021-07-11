@@ -5,18 +5,24 @@ class DirectMethod(object):
     """
     def __init__(self) -> None:
         self.fitted = None
+    
+    def fit_tabular(self, behavior_data, pi_e, cfg) -> None:
+        NotImplemented
 
-    def fit_NN(self) -> None:
+    def Q_tabular(self, states, actions=None) -> np.ndarray:
         NotImplemented
     
-    def fit_tabular(self) -> None:
+    def fit_NN(self, behavior_data, pi_e, cfg) -> None:
         NotImplemented
     
     def Q_NN(self, states, actions=None) -> np.ndarray:
         NotImplemented
     
-    def Q_tabular(self, states, actions=None) -> np.ndarray:
-        NotImplemented
+    def fit(self, behavior_data, pi_e, cfg, modeltype) -> None:
+        if modeltype == 'tabular':
+            self.fit_tabular(behavior_data, pi_e, cfg)
+        else:
+            self.fit_NN(behavior_data, pi_e, cfg)
     
     def Q(self, states, actions=None) -> np.ndarray:
         if self.fitted is None:

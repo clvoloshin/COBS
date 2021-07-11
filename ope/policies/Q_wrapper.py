@@ -6,7 +6,7 @@ class QWrapper(object):
     def __init__(self, Qfunc):
         self.Q_values = Qfunc
     
-    def get_Qs_from_data(self, data, cfg):
+    def get_Qs_for_data(self, data, cfg):
         Qs = []
         batchsize = 1
         num_batches = int(np.ceil(len(data)/batchsize))
@@ -41,7 +41,8 @@ class QWrapper(object):
         if self.Q_values.fitted == 'tabular':
             Qs = []
             for state in np.squeeze(x):
-                Qs.append(self.Q_values[self.map[state]])
+                # Qs.append(self.Q_values[self.map[state]])
+                Qs.append(self.Q_values.predict(state))
             return  np.array(Qs)
         else:
             if self.Q_values.fitted != 'linear':
