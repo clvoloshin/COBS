@@ -154,6 +154,8 @@ You can now add your own NN as a method's model in the configuration:
 ## Policies
 
 There are currently two available policy types.
+1. Basic Policy: pi(.|s) = [prob(a=0), prob(a=1),..., prob(a=n)]
+2. Epsilon-Greedy: pi(.|s) = Greedy(s) with prob 1-e and random(1,..,n) otherwise
 
 
 ## <a name="CitingCOBS"></a>Citing COBS
