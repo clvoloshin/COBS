@@ -12,13 +12,13 @@ COBS is based on Empirical Study of Off Policy Policy Estimation paper (https://
 
 ### Tutorial
 
-To get started using the experimental tools see [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipynb)
+To get started using the experimental tools see [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipynb).
 
 ### Installation
 
-Tested on python3.6, python3.7.
+Tested on python3.6+.
 ```
-python3.7 -m venv cobs-env
+python3 -m venv cobs-env
 source cobs-env/bin/activate
 pip3 install -r requirements.txt
 ```
