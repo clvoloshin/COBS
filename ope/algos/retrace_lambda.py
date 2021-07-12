@@ -1,4 +1,4 @@
-from ope.algos.direct_method import DirectMethod
+from ope.algos.direct_method import DirectMethodQ
 import sys
 import numpy as np
 import pandas as pd
@@ -16,11 +16,11 @@ import torch.autograd as autograd
 import torch.nn.functional as F
 torch.autograd.set_detect_anomaly(True)
 
-class Retrace(DirectMethod):
+class Retrace(DirectMethodQ):
     """Algorithm: Retrace Family (Retrace(lambda), Q(lambda), Tree-Backup(lambda)).
     """
     def __init__(self, method, lamb) -> None:
-        DirectMethod.__init__(self)
+        DirectMethodQ.__init__(self)
         self.method = method
         self.lamb = lamb
 
@@ -149,9 +149,9 @@ class Retrace(DirectMethod):
 
     def Q_tabular(self, states, actions=None) -> np.ndarray:
         if actions is None:
-            return self.table[self.mapping[states]]
+            return np.array([self.table[self.mapping[state]] for state in np.squeeze(states)])
         else:
-            return self.table[self.mapping[states]][np.arange(len(actions)), actions]
+            return np.array([self.table[self.mapping[state]] for state in np.squeeze(states)])[np.arange(len(actions)), actions]
 
     def Q_NN(self, states, actions=None) -> np.ndarray:
         if actions is None:

@@ -1,4 +1,4 @@
-from ope.algos.direct_method import DirectMethod
+from ope.algos.direct_method import DirectMethodQ
 import sys
 import numpy as np
 import pandas as pd
@@ -28,11 +28,11 @@ class DataHolder(object):
         self.policy_action = policy_action
         self.original_shape = original_shape
 
-class FittedQEvaluation(DirectMethod):
+class FittedQEvaluation(DirectMethodQ):
     """Algorithm: Fitted Q Evaluation (FQE).
     """
     def __init__(self) -> None:
-        DirectMethod.__init__(self)
+        DirectMethodQ.__init__(self)
 
     def fit_tabular(self, data, pi_e, config, verbose = True):
         """(Tabular) Get the FQE OPE Q function for pi_e.
@@ -134,9 +134,9 @@ class FittedQEvaluation(DirectMethod):
     
     def Q_tabular(self, states, actions=None) -> np.ndarray:
         if actions is None:
-            return self.table[self.mapping[states]]
+            return np.array([self.table[self.mapping[state]] for state in np.squeeze(states)])
         else:
-            return self.table[self.mapping[states]][np.arange(len(actions)), actions]
+            return np.array([self.table[self.mapping[state]] for state in np.squeeze(states)])[np.arange(len(actions)), actions]
 
     def Q_NN(self, states, actions=None) -> np.ndarray:
         if actions is None:

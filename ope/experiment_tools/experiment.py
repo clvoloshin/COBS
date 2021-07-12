@@ -128,10 +128,6 @@ class ExperimentRunner(object):
 
         dic = {}
 
-        if isinstance(models, str):
-            if models == 'all':
-                models = ['MFree_Retrace_L', 'MFree_MRDR', 'MFree_IH', 'MFree_FQE', 'MBased_MLE', 'MFree_Reg', 'IS']
-
         eval_data = rollout(env, pi_e, processor, absorbing_state, N=max(10000, cfg.num_traj), T=T, frameskip=frameskip, frameheight=frameheight, path=None, filename='tmp',)
         behavior_data = rollout(env, pi_b, processor, absorbing_state, pi_e = pi_e, N=cfg.num_traj, T=T, frameskip=frameskip, frameheight=frameheight, path=None, filename='tmp',)
 
@@ -153,50 +149,58 @@ class ExperimentRunner(object):
         print('V(pi_b): ',behavior_data.value_of_data(gamma, False), 'V(pi_b) Normalized: ',behavior_data.value_of_data(gamma, True))
         print('V(pi_e): ',eval_data.value_of_data(gamma, False), 'V(pi_e) Normalized: ',eval_data.value_of_data(gamma, True))
 
-        if 'FQE' in cfg.models:
-            FQE = FittedQEvaluation()
-            FQE.fit(behavior_data, pi_e, cfg, cfg.models['FQE']['model'])
-            FQE_Qs = QWrapper(FQE).get_Qs_for_data(behavior_data, cfg)
-            out = self.estimate(FQE_Qs, behavior_data, gamma, 'FQE', true)
-            dic.update(out)
-        if 'Retrace' in cfg.models:
-            retrace = Retrace('Retrace', cfg.models['Retrace']['lamb'])
-            retrace.fit(behavior_data, pi_e, cfg, cfg.models['Retrace']['model'])
-            retrace_Qs = QWrapper(retrace).get_Qs_for_data(behavior_data, cfg)
-            out = self.estimate(retrace_Qs, behavior_data, gamma, 'Retrace(lambda)', true)
-            dic.update(out)
-        if 'Tree-Backup' in cfg.models:
-            tree = Retrace('Tree-Backup', cfg.models['Tree-Backup']['lamb'])
-            tree.fit(behavior_data, pi_e, cfg, cfg.models['Tree-Backup']['model'])
-            tree_Qs = QWrapper(tree).get_Qs_for_data(behavior_data, cfg)
-            out = self.estimate(tree_Qs, behavior_data, gamma, 'Tree-Backup', true)
-            dic.update(out)
-        if 'Q^pi(lambda)' in cfg.models:
-            q_lambda = Retrace('Q^pi(lambda)', cfg.models['Q^pi(lambda)']['lamb'])
-            q_lambda.fit(behavior_data, pi_e, cfg, cfg.models['Q^pi(lambda)']['model'])
-            q_lambda_Qs = QWrapper(q_lambda).get_Qs_for_data(behavior_data, cfg)
-            out = self.estimate(q_lambda_Qs, behavior_data, gamma, 'Q^pi(lambda)', true)
-            dic.update(out)
-        if 'Q-Reg' in cfg.models:
-            q_reg = DirectMethodRegression()
-            q_reg.fit(behavior_data, pi_e, cfg, cfg.models['Q-Reg']['model'])
-            q_reg_Qs = QWrapper(q_reg).get_Qs_for_data(behavior_data, cfg)
-            out = self.estimate(q_reg_Qs, behavior_data, gamma, 'Q-Reg', true)
-            dic.update(out)
+        for model in cfg.models:
+            if 'FQE' == model:
+                FQE = FittedQEvaluation()
+                FQE.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
+                FQE_Qs = FQE.get_Qs_for_data(behavior_data, cfg)
+                out = self.estimate(FQE_Qs, behavior_data, gamma, model, true)
+                dic.update(out)
+            elif 'Retrace' == model:
+                retrace = Retrace(model, cfg.models[model]['lamb'])
+                retrace.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
+                retrace_Qs = retrace.get_Qs_for_data(behavior_data, cfg)
+                out = self.estimate(retrace_Qs, behavior_data, gamma, model, true)
+                dic.update(out)
+            elif 'Tree-Backup' == model:
+                tree = Retrace(model, cfg.models[model]['lamb'])
+                tree.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
+                tree_Qs = tree.get_Qs_for_data(behavior_data, cfg)
+                out = self.estimate(tree_Qs, behavior_data, gamma, model, true)
+                dic.update(out)
+            elif 'Q^pi(lambda)' == model:
+                q_lambda = Retrace(model, cfg.models[model]['lamb'])
+                q_lambda.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
+                q_lambda_Qs = q_lambda.get_Qs_for_data(behavior_data, cfg)
+                out = self.estimate(q_lambda_Qs, behavior_data, gamma, model, true)
+                dic.update(out)
+            elif 'Q-Reg' == model:
+                q_reg = DirectMethodRegression()
+                q_reg.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
+                q_reg_Qs = q_reg.get_Qs_for_data(behavior_data, cfg)
+                out = self.estimate(q_reg_Qs, behavior_data, gamma, model, true)
+                dic.update(out)
+            elif 'MRDR' == model:
+                mrdr = MRDR()
+                mrdr.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
+                mrdr_Qs = mrdr.get_Qs_for_data(behavior_data, cfg)
+                out = self.estimate(mrdr_Qs, behavior_data, gamma, model, true)
+                dic.update(out)
+            elif 'IH' == model:
+                ih = IH()
+                ih.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
+                inf_hor_output = ih.evaluate(behavior_data, cfg)
+                dic.update({'IH': [inf_hor_output, (inf_hor_output - true )**2]})
+            elif 'MBased' == model:
+                mbased = ApproxModel(cfg, behavior_data.n_actions)
+                mbased.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
+                mbased.get_Qs_for_data(pi_e, behavior_data, cfg)
+            elif 'IS' == model:
+                out = self.estimate([], behavior_data, gamma, 'IS', true, True)
+                dic.update(out)
+            else:
+                print(model, ' is not a valid method')
             
-        # FQE = FittedQEvaluation(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
-
-        # fqe_max_epochs = 80
-        # _,_,fqe_Q = FQE.run_NN(env, pi_b, pi_e, fqe_max_epochs, epsilon=0.0001)
-
-        # fqe_model = QWrapper(fqe_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-        # Qs_FQE_based = get_Qs.get(fqe_model)
-
-        # out = self.estimate(Qs_FQE_based, behavior_data, gamma, 'FQE', true)
-        # dic.update(out)
-
-        # get_Qs = getQs(behavior_data, pi_e, processor, env.n_actions)
-
         # for model in models:
         #     if (model == 'MBased_Approx') or (model == 'MBased_MLE'):
         #         if model == 'MBased_MLE':
@@ -213,74 +217,6 @@ class ExperimentRunner(object):
         #         out = self.estimate(Qs_model_based, behavior_data, gamma,'MBased_Approx', true)
         #         dic.update(out)
 
-        #     elif model == 'MFree_Reg':
-        #         DMRegression = DirectMethodRegression(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
-        #         dm_max_epochs = 80
-        #         _,dm_model_Q = DMRegression.run_NN(env, pi_b, pi_e, dm_max_epochs, epsilon=0.001)
-
-        #         dm_model = QWrapper(dm_model_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-        #         Qs_DM_based = get_Qs.get(dm_model)
-
-        #         out = self.estimate(Qs_DM_based, behavior_data, gamma,'DM Regression', true)
-        #         dic.update(out)
-        #     elif model == 'MFree_FQE':
-        #         FQE = FittedQEvaluation(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
-
-        #         fqe_max_epochs = 80
-        #         _,_,fqe_Q = FQE.run_NN(env, pi_b, pi_e, fqe_max_epochs, epsilon=0.0001)
-
-        #         fqe_model = QWrapper(fqe_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-        #         Qs_FQE_based = get_Qs.get(fqe_model)
-
-        #         out = self.estimate(Qs_FQE_based, behavior_data, gamma, 'FQE', true)
-        #         dic.update(out)
-        #     elif model == 'MFree_IH':
-        #         ih_max_epochs = 1001
-        #         ih_matrix_size = 128
-        #         inf_horizon = IH(behavior_data, 30, 1e-3, 3e-3, gamma, False, Qmodel, processor=processor)
-        #         inf_hor_output = inf_horizon.evaluate(env, ih_max_epochs, ih_matrix_size)
-        #         inf_hor_output /= 1/np.sum(gamma ** np.arange(max(behavior_data.lengths())))
-        #         dic.update({'IH': [inf_hor_output, (inf_hor_output - true )**2]})
-        #     elif model == 'MFree_MRDR':
-        #         mrdr = MRDR(behavior_data, gamma, frameskip, frameheight, Qmodel, processor)
-
-        #         mrdr_max_epochs = 80
-        #         mrdr_matrix_size = 1024
-        #         _,_,mrdr_Q = mrdr.run_NN(env, pi_b, pi_e, mrdr_max_epochs, mrdr_matrix_size, epsilon=0.001)
-        #         mrdr_model = QWrapper(mrdr_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-        #         Qs_mrdr_based = get_Qs.get(mrdr_model)
-
-        #         out = self.estimate(Qs_mrdr_based, behavior_data, gamma, 'MRDR', true)
-        #         dic.update(out)
-        #     elif model == 'MFree_Retrace_L':
-        #         retrace = Retrace(behavior_data, gamma, frameskip, frameheight, Qmodel, lamb=.9, processor=processor)
-
-        #         retrace_max_epochs = 80
-        #         _,_,retrace_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'retrace', epsilon=0.001)
-        #         retrace_model = QWrapper(retrace_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype) # use mlp-based wrapper even for linear
-        #         Qs_retrace_based = get_Qs.get(retrace_model)
-        #         out = self.estimate(Qs_retrace_based, behavior_data, gamma, 'Retrace(lambda)', true)
-        #         dic.update(out)
-
-        #         _,_,tree_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'tree-backup', epsilon=0.001)
-        #         tree_model = QWrapper(tree_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-        #         Qs_tree_based = get_Qs.get(tree_model)
-        #         out = self.estimate(Qs_tree_based, behavior_data, gamma, 'Tree-Backup', true)
-        #         dic.update(out)
-
-        #         _,_,q_lambda_Q = retrace.run_NN(env, pi_b, pi_e, retrace_max_epochs, 'Q^pi(lambda)', epsilon=0.001)
-        #         q_lambda_model = QWrapper(q_lambda_Q, None, is_model=True, action_space_dim=env.n_actions, modeltype=modeltype)
-        #         Qs_q_lambda_based = get_Qs.get(q_lambda_model)
-        #         out = self.estimate(Qs_q_lambda_based, behavior_data, gamma, 'Q^pi(lambda)', true)
-        #         dic.update(out)
-
-        #     elif model == 'IS':
-        #         out = self.estimate([], behavior_data, gamma, 'IS', true, True)
-        #         dic.update(out)
-        #     else:
-        #         print(model, ' is not a valid method')
-
-        #     analysis(dic)
 
         result = analysis(dic)
         self.results.append(Result(cfg, result))

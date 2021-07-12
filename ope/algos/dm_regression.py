@@ -1,5 +1,5 @@
 
-from ope.algos.direct_method import DirectMethod
+from ope.algos.direct_method import DirectMethodQ
 import sys
 import numpy as np
 import pandas as pd
@@ -19,11 +19,11 @@ import torch.nn.functional as F
 torch.autograd.set_detect_anomaly(True)
 
 
-class DirectMethodRegression(DirectMethod):
+class DirectMethodRegression(DirectMethodQ):
     """Algorithm: Direct Model Regression (Q-Reg).
     """
     def __init__(self) -> None:
-        DirectMethod.__init__(self)
+        DirectMethodQ.__init__(self)
 
     def wls_sherman_morrison(self, phi_in, rewards_in, omega_in, lamb, omega_regularizer, cond_number_threshold_A, block_size=None):
         """Weighted Least Squares via Sherman Morrison Algorithm.
@@ -154,7 +154,7 @@ class DirectMethodRegression(DirectMethod):
         phi = self.compute_grid_features(full_dataset)
         self.weight = self.wls_sherman_morrison(phi, Rs, factors, lamb, alpha, cond_number_threshold_A, block_size)
 
-        self.fitted = 'tabular'
+        
         self.n_dim = full_dataset.n_dim
         self.n_actions = full_dataset.n_actions
 
@@ -162,7 +162,7 @@ class DirectMethodRegression(DirectMethod):
 
     def Q_tabular(self, states, actions=None) -> np.ndarray:
         if actions is None:
-            Q = np.array([np.matmul(self.weight, self.compute_feature(states, a, 0, self.n_dim, self.n_actions)) for a in range(self.n_actions)])
+            Q = np.array([[np.matmul(self.weight, self.compute_feature(s, a, 0, self.n_dim, self.n_actions)) for a in range(self.n_actions)] for s in np.squeeze(states)])
             return Q
         else:
             #TODO
