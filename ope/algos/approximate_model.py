@@ -1,3 +1,4 @@
+
 from ope.algos.direct_method import DirectMethodModelBased
 import numpy as np
 import scipy.signal as signal
@@ -107,6 +108,7 @@ class ApproxModel(DirectMethodModelBased):
             obj2: [next state, reward, is done]
         """
 
+
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))
 
@@ -116,6 +118,8 @@ class ApproxModel(DirectMethodModelBased):
         rewards = data.rewards().reshape(-1)
         actions = data.actions().reshape(-1)
         dones = data.dones().reshape(-1)
+
+        
 
         shp = states.shape
         states = states.reshape(np.prod(shp[:2]), -1)
@@ -208,6 +212,7 @@ class ApproxModel(DirectMethodModelBased):
 
         # state = x
         # make action agnostic.
+
         state = np.repeat(x, self.n_actions, axis=0)
         acts  = np.tile(np.arange(self.n_actions), len(x))
 
@@ -217,11 +222,13 @@ class ApproxModel(DirectMethodModelBased):
         # Q
         cost_to_go = np.zeros(len(state))
 
+
         new_state, cost_holder, new_done = self.transition_NN(state, np.atleast_2d(np.eye(self.n_actions)[acts]))
         # cost_holder = self.estimate_R(state, np.atleast_2d(np.eye(self.action_space_dim)[acts]), None)
 
         done = done + new_done
         new_cost_to_go = cost_to_go + gamma * cost_holder * (1-done)
+
 
         norm_change = np.sqrt(np.sum((new_cost_to_go-cost_to_go)**2) / len(state))
         # print(trajectory_length, norm_change, cost_to_go, sum(done), len(done))
@@ -250,7 +257,9 @@ class ApproxModel(DirectMethodModelBased):
             #     done = True
 
             done[still_alive] = (done[still_alive] + new_done).astype(bool)
+
             new_cost_to_go = cost_to_go[still_alive] + gamma * cost_holder * (1-done[still_alive])
+
 
             # norm_change = np.sqrt(np.sum((new_cost_to_go-cost_to_go)**2) / len(state))
             # print(trajectory_length, norm_change, cost_to_go, sum(done), len(done))
@@ -268,6 +277,7 @@ class ApproxModel(DirectMethodModelBased):
             state[still_alive] = new_state
 
         return cost_to_go
+
 
     def fit_tabular(self, dataset, pi_e, config, verbose=True) -> float:
         '''
@@ -492,10 +502,13 @@ class ApproxModel(DirectMethodModelBased):
             all_Qs.append(Qs)
         return np.array(all_Qs)    
 
+
     @staticmethod
     def discounted_sum(costs, discount):
         '''
         Calculate discounted sum of costs
         '''
         y = signal.lfilter([1], [1, -discount], x=costs[::-1])
+
         return y[::-1][0]
+
