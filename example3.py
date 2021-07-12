@@ -76,7 +76,7 @@ def main(param):
 
 if __name__ == '__main__':
     # Local:
-    # python example3.py experiment_cfg.json
+    # python example3.py nn_example_cfg.json
 
     parser = argparse.ArgumentParser(description='Distribute experiments across ec2 instances.')
 
