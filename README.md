@@ -90,6 +90,8 @@ See [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipy
 
 ## Baselines
 
+Current Direct Method Baselines: FQE, Retrace, Tree-Backup, Q^pi(lambda), Q-Reg, MRDR, IH, MBased.
+
 ### Direct Method
 
 To add a new Direct Method, implement one of the [Direct Method classes](https://github.com/clvoloshin/COBS/blob/master/ope/algos/direct_method.py) and put the new method in the [algos directory](https://github.com/clvoloshin/COBS/blob/master/ope/algos).
@@ -125,11 +127,15 @@ elif 'NewMethod' == model:
 
 ### Hybrid Method
 
-TODO
+Current Hybrid Method Baselines: DR, WDR, MAGIC
+
+TODO: How to add your own.
 
 ### IPS Method
 
-TODO
+Current IPS Method Baselines: Naive, IS, Per-Decision IS, WIS, Per-Decision WIS
+
+TODO: How to add your own.
 
 ## Adding a new model to the configuration
 
