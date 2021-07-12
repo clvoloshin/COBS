@@ -6,13 +6,17 @@ COBS is an Off-Policy Policy Evaluation (OPE) Benchmarking Suite. The goal is to
 
 We'd like to make this repo as useful as possible for the community. We commit to continual refactoring and code-review to make sure the COBS continues to serve its purpose. Help is always appreciated!
 
-COBS is based on Empirical Study of Off Policy Policy Estimation paper (https://arxiv.org/abs/1911.06854). We have migrated from Tensorflow to Pytorch and made COBS generally more easy to use. For the original TF implementation and replication of the paper, please see the paper branch.
+COBS is based on Empirical Study of Off Policy Policy Estimation paper (https://arxiv.org/abs/1911.06854). 
 
 ## Getting started
 
 ### Tutorial
 
-To get started using the experimental tools see [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipynb).
+To get started using the experimental tools see [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipynb). For individual files, see [example3.py](https://github.com/clvoloshin/COBS/blob/master/example3.py) and [example4.py](https://github.com/clvoloshin/COBS/blob/master/example4.py).
+
+### Replication of Original
+
+We have migrated from Tensorflow to Pytorch and made COBS more easy to use. For the original TF implementation and replication of the paper, please see the paper branch. Run paper.py using the instructions provided at the bottom of the file.
 
 ### Installation
 
