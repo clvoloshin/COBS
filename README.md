@@ -14,7 +14,7 @@ COBS is based on Empirical Study of Off Policy Policy Estimation paper (https://
 
 To get started using the experimental tools see [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipynb). For individual files, see [example3.py](https://github.com/clvoloshin/COBS/blob/master/example3.py) and [example4.py](https://github.com/clvoloshin/COBS/blob/master/example4.py).
 
-### Replication of Original
+### Paper Reproducibility
 
 We have migrated from Tensorflow to Pytorch and made COBS more easy to use. For the original TF implementation and replication of the paper, please see the paper branch. Run paper.py using the instructions provided at the bottom of the file.
 
