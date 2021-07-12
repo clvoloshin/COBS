@@ -1,0 +1,74 @@
+{
+    "experiment": {
+        "gamma": 0.98,
+        "horizon": 4,
+        "base_policy": 0.8,
+        "eval_policy": 0.2,
+        "stochastic_env": true,
+        "stochastic_rewards": false,
+        "sparse_rewards": false,
+        "num_traj": 8,
+        "is_pomdp": false,
+        "pomdp_horizon": 2,
+        "seed": 1000,
+        "experiment_number": 0,
+        "access": 0,
+        "secret": 0,
+        "to_regress_pi_b": {
+            "to_regress": false,
+            "model": "tabular"
+        },
+        "frameskip": 1,
+        "frameheight": 1
+    },
+    "models": {
+        "FQE": {
+            "model": "tabular",
+            "convergence_epsilon": 1e-3,
+            "max_epochs": 100
+        },
+        "Retrace": {
+            "model": "tabular",
+            "convergence_epsilon": 1e-3,
+            "divergence_epsilon": 1000,
+            "max_epochs": 100,
+            "lamb": 0.9
+        },
+        "Tree-Backup": {
+            "model": "tabular",
+            "convergence_epsilon": 1e-3,
+            "divergence_epsilon": 1000,
+            "max_epochs": 100,
+            "lamb": 0.9
+        },
+        "Q^pi(lambda)": {
+            "model": "tabular",
+            "convergence_epsilon": 1e-3,
+            "divergence_epsilon": 1000,
+            "max_epochs": 100,
+            "lamb": 0.9
+        },
+        "Q-Reg": {
+            "model": "tabular",
+            "convergence_epsilon": 1e-3,
+            "max_epochs": 100
+        },
+        "MRDR": {
+            "model": "tabular",
+            "convergence_epsilon": 1e-3,
+            "max_epochs": 100
+        },
+        "IH": {
+            "model": "tabular",
+            "convergence_epsilon": 1e-3,
+            "max_epochs": 100
+        },
+        "MBased": {
+            "model": "tabular",
+            "convergence_epsilon": 1e-3,
+            "max_epochs": 100,
+            "max_traj_length": 20
+        },
+        "IS": {"model": "tabular"}
+    }
+}
