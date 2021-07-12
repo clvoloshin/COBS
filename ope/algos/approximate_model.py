@@ -1,308 +1,125 @@
+
+from ope.algos.direct_method import DirectMethodModelBased
 import numpy as np
 import scipy.signal as signal
-import keras
-from keras.models     import Sequential
-from keras.layers     import Dense, Conv2D, Flatten, MaxPool2D, concatenate, UpSampling2D, Reshape, Lambda, Conv2DTranspose
-from keras.optimizers import Adam
-from keras import backend as K
-import tensorflow as tf
-from keras.models import load_model
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from ope.utls.thread_safe import threadsafe_generator
 import os
-from keras import regularizers
 import time
 from copy import deepcopy
 from sklearn.linear_model import LinearRegression, LogisticRegression
+from tqdm import tqdm
 
-class ApproxModel(object):
-    def __init__(self, gamma, filename, max_traj_length=None, frameskip=2, frameheight=2, processor=None, action_space_dim=3):
-        self.gamma = gamma
-        self.filename = filename
-        self.override_done = True if max_traj_length is not None else False
-        self.max_traj_length = 200 if (max_traj_length is None) else max_traj_length
-        self.frameskip = frameskip
-        self.frameheight = frameheight
-        self.action_space_dim = action_space_dim
-        self.processor = processor
+import torch
+torch.backends.cudnn.benchmark = True
+import torch.nn as nn
+import torch.optim as optim
+import torch.autograd as autograd
+import torch.nn.functional as F
+torch.autograd.set_detect_anomaly(True)
 
-    @staticmethod
-    def sample(transitions, N):
-        idxs = np.random.choice(np.arange(len(transitions)), size=N)
-        return transitions[idxs]
+class ApproxModel(DirectMethodModelBased):
+    """Algorithm: Approx Model (Model-Based). 
 
-    def create_T_model(self, input_size):
+    This is class builds a model from which Q can be estimated through rollouts.
+    """
+    def __init__(self, cfg, n_actions):
+        DirectMethodModelBased.__init__(self)
+        self.frameheight = cfg.frameheight
+        self.frameskip = cfg.frameskip
+        self.max_traj_length = cfg.models['MBased']['max_traj_length']
+        self.override_done = True if self.max_traj_length is not None else False
+        self.n_actions = n_actions
+ 
+    def fit_NN(self, data, pi_e, config, verbose=True) -> float:
+        cfg = config.models['MBased']
+        processor = config.processor
+        
+        # TODO: early stopping + lr reduction
+        
+        im = data.states()[0]
+        if processor: im = processor(im)
+        self.model = cfg['model'](im.shape[1:], data.n_actions)
+        optimizer = optim.Adam(self.model.parameters())
+        
+        print('Training: Model Free')
+        losses = []
+        
+        batch_size = cfg['batch_size']
 
-        inp = keras.layers.Input(input_size, name='frames')
-        actions = keras.layers.Input((self.action_space_dim,), name='mask')
-        def init(): return keras.initializers.TruncatedNormal(mean=0.0, stddev=0.001, seed=np.random.randint(2**32))
-        # conv1 = Conv2D(32, kernel_size=16, strides=1, activation='elu', data_format='channels_first', padding='same')(inp)
-        # pool1 = MaxPool2D((2,2), data_format='channels_first')(conv1)
-        # conv2 = Conv2D(64, kernel_size=8, strides=1, activation='elu', data_format='channels_first', padding='same')(pool1)
-        # pool2 = MaxPool2D((2,2), data_format='channels_first')(conv2)
-        # conv3 = Conv2D(128, kernel_size=4, strides=1, activation='elu', data_format='channels_first', padding='same')(pool2)
-        # # # pool3 = MaxPool2D((2,2), data_format='channels_first')(conv3)
+        dataset_length = data.num_tuples()
+        perm = np.random.permutation(range(dataset_length))
+        eighty_percent_of_set = int(.8*len(perm))
+        training_idxs = perm[:eighty_percent_of_set]
+        validation_idxs = perm[eighty_percent_of_set:]
+        training_steps_per_epoch = int(1.*np.ceil(len(training_idxs)/float(batch_size)))
+        validation_steps_per_epoch = int(np.ceil(len(validation_idxs)/float(batch_size)))
+        
+        for k in tqdm(range(cfg['max_epochs'])):
+            train_gen = self.generator(data, config, training_idxs, fixed_permutation=True, batch_size=batch_size, processor=processor)
+            val_gen = self.generator(data, config, training_idxs, fixed_permutation=True, batch_size=batch_size, processor=processor)
 
-        # # # flat = Flatten()(pool3)
-        # # # concat = concatenate([flat, actions], axis = -1)
-        # # # dense1 = Dense(10, activation='relu')(concat)
-        # # # dense2 = Dense(20, activation='relu')(dense1)
-        # # # dense3 = Dense(int(np.prod(pool3.shape[1:])), activation='relu')(dense2)
-        # # # unflatten = Reshape((int(x) for x in pool3.shape[1:]))(dense3)
+            M = 5
+        
+            for step in range(training_steps_per_epoch):
+                
+                with torch.no_grad():
+                    inp, out = next(train_gen)
+                    states = torch.from_numpy(inp[0]).float()
+                    actions = torch.from_numpy(inp[1]).bool()
+                    
+                    next_states = torch.from_numpy(out[0]).float()
+                    rewards = torch.from_numpy(out[1]).float()
+                    dones = torch.from_numpy(out[2]).float()
 
-        # conv4 = Conv2D(128, kernel_size=4, strides=1, activation='elu', data_format='channels_first', padding='same')(conv3)
-        # up1 = UpSampling2D((2,2), data_format='channels_first')(conv4)
-        # conv5 = Conv2D(64, kernel_size=8, strides=1, activation='elu', data_format='channels_first', padding='same')(up1)
-        # up2 = UpSampling2D((2,2), data_format='channels_first')(conv5)
-        # out = Conv2D(self.action_space_dim, kernel_size=16, strides=1, activation='linear', data_format='channels_first', padding='same', name='T')(up2)
+                pred_next_states, pred_rewards, pred_dones = self.model(states, actions)
 
-        conv1 = Conv2D(8, (7,7), strides=(4,4), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(inp)
-        pool1 = MaxPool2D(data_format='channels_first')(conv1)
-        conv2 = Conv2D(16, (3,3), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(pool1)
+                states_loss = (pred_next_states - next_states).pow(2).mean()
+                rewards_loss = (pred_rewards - rewards).pow(2).mean()
+                dones_loss = nn.BCELoss()(pred_dones, dones)
+                loss = states_loss + rewards_loss + dones_loss
+                
+                optimizer.zero_grad()
+                loss.backward()
 
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg['clipnorm'])
+                optimizer.step()
 
-        conv3 = Conv2DTranspose(16, (3, 3), strides=(1, 1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv2)
-        up1 = UpSampling2D(data_format='channels_first')(conv3)
-        out = Conv2DTranspose(self.action_space_dim, (7,7), strides=(4,4), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6), name='T')(up1)
-
-        def filter_out(out):
-            filtered_output = tf.boolean_mask(out, actions, axis = 0)
-            filtered_output = K.expand_dims(filtered_output, axis=1)
-            return filtered_output
-
-        filtered_output = Lambda(filter_out)(out)
-
-        # model = keras.models.Model(input=[inp, actions], output=[out])
-        model = keras.models.Model(input=[inp, actions], output=[filtered_output])
-
-        all_T = keras.models.Model(inputs=[inp],
-                                 outputs=model.get_layer('T').output)
-
-
-        rmsprop = keras.optimizers.RMSprop(lr=0.0001, rho=0.9, epsilon=None, decay=0.0, clipnorm=1.)
-        model.compile(loss='mse', optimizer=rmsprop)
-
-        return model, all_T
-
-
-    def create_full_model(self, input_size):
-
-        inp = keras.layers.Input(input_size, name='frames')
-        actions = keras.layers.Input((self.action_space_dim,), name='mask')
-        def init(): return keras.initializers.TruncatedNormal(mean=0.0, stddev=0.001, seed=np.random.randint(2**32))
-
-        if self.modeltype == 'conv':
-            # Compress
-            conv1 = Conv2D(8, (7,7), strides=(2,2), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(inp)
-            conv2 = Conv2D(16, (5,5), strides=(2,2), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv1)
-            conv3 = Conv2D(32, (3,3), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv2)
-
-            flat = Flatten()(conv3)
-
-            # Transition
-            conv4 = Conv2DTranspose(32, (3, 3), strides=(1, 1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv3)
-            # up1 = UpSampling2D(data_format='channels_first')(conv4)
-            conv5 = Conv2DTranspose(16, (5,5), strides=(2,2), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv4)
-            out_T = Conv2DTranspose(self.action_space_dim, (7,7), strides=(2,2), padding='same', data_format='channels_first', activation='tanh',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6), name='all_T')(conv5)
-
-            # Rewards
-            dense1 = Dense(10, activation='relu')(flat)
-            dense2 = Dense(30, activation='relu')(dense1)
-            out_R = Dense(self.action_space_dim, activation='linear', name='all_R')(dense2)
-
-            # Dones
-            dense3 = Dense(10, activation='relu')(flat)
-            dense4 = Dense(30, activation='relu')(dense3)
-            out_D = Dense(self.action_space_dim, activation='softmax', name='all_D')(dense4)
-        elif  self.modeltype == 'conv1':
-            # Compress
-            conv1 = Conv2D(16, (3,3), strides=(2,2), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(inp)
-            conv2 = Conv2D(16, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv1)
-            conv3 = Conv2D(16, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv2)
-
-            flat = Flatten()(conv3)
-
-            # Transition
-            conv4 = Conv2DTranspose(16, (2, 2), strides=(1, 1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv3)
-            # up1 = UpSampling2D(data_format='channels_first')(conv4)
-            conv5 = Conv2DTranspose(16, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(conv4)
-            out_T = Conv2DTranspose(self.action_space_dim, (2,2), strides=(2,2), padding='same', data_format='channels_first', activation='tanh',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6), name='all_T')(conv5)
-
-            # Rewards
-            dense1 = Dense(5, activation='relu')(flat)
-            dense2 = Dense(10, activation='relu')(dense1)
-            out_R = Dense(self.action_space_dim, activation='linear', name='all_R')(dense2)
-
-            # Dones
-            dense3 = Dense(5, activation='relu')(flat)
-            dense4 = Dense(10, activation='relu')(dense3)
-            out_D = Dense(self.action_space_dim, activation='softmax', name='all_D')(dense4)
-        else:
-            # Compress
-            flat = Flatten()(inp)
-            dense1 = Dense(128, activation='relu')(flat)
-            dense2 = Dense(32, activation='relu')(dense1)
-            # dense3 = Dense(128, activation='relu')(dense2)
-            out = Dense(2*self.action_space_dim, activation='linear')(dense2)
-            out_T = Reshape((-1,2), name='all_T')(out)
-
-
-            # Rewards
-            dense4 = Dense(8, activation='relu')(dense1)
-            out_R = Dense(self.action_space_dim, activation='linear', name='all_R')(dense2)
-
-            # Dones
-            dense5 = Dense(8, activation='relu')(dense1)
-            out_D = Dense(self.action_space_dim, activation='softmax', name='all_D')(dense4)
-
-
-        def filter_out(out):
-            filtered_output = tf.boolean_mask(out, actions, axis = 0)
-            filtered_output = K.expand_dims(filtered_output, axis=1)
-            return filtered_output
-
-        filtered_T = Lambda(filter_out, name='T')(out_T)
-        filtered_R = Lambda(filter_out, name='R')(out_R)
-        filtered_D = Lambda(filter_out, name='D')(out_D)
-
-        # model = keras.models.Model(input=[inp, actions], output=[out])
-        losses = {
-            "T": "mse",
-            "R": "mse",
-            "D": "binary_crossentropy",
-        }
-
-        model = keras.models.Model(input=[inp, actions], output=[filtered_T, filtered_R, filtered_D])
-
-        all_model = keras.models.Model(inputs=[inp],
-                                 outputs=[model.get_layer('all_T').output, model.get_layer('all_R').output, model.get_layer('all_D').output])
-
-        # rmsprop = keras.optimizers.RMSprop(lr=0.0001, rho=0.9, epsilon=None, decay=0.0, clipnorm=1.)
-        model.compile(loss=losses, optimizer='Adam')
-
-        return model, all_model
-
-    def create_scalar_model(self, input_size, is_R=True):
-
-        inp = keras.layers.Input(input_size, name='frames')
-        actions = keras.layers.Input((self.action_space_dim,), name='mask')
-
-        # "The first hidden layer convolves 16 8×8 filters with stride 4 with the input image and applies a rectifier nonlinearity."
-        # conv_1 = keras.layers.convolutional.Convolution2D(
-        #     8, 5 , 5, subsample=(4, 4), activation='relu'
-        # )(normalized)
-
-        conv1 = Conv2D(64, kernel_size=16, strides=2, activation='relu', data_format='channels_first')(inp)
-        #pool1 = MaxPool2D(data_format='channels_first')(conv1)
-        conv2 = Conv2D(64, kernel_size=8, strides=2, activation='relu', data_format='channels_first')(conv1)
-        #pool2 = MaxPool2D(data_format='channels_first')(conv2)
-        conv3 = Conv2D(64, kernel_size=4, strides=2, activation='relu', data_format='channels_first')(conv2)
-        #pool3 = MaxPool2D(data_format='channels_first')(conv3)
-        flat = Flatten()(conv3)
-        dense1 = Dense(10, activation='relu')(flat)
-        dense2 = Dense(30, activation='relu')(dense1)
-        out = Dense(self.action_space_dim, activation='sigmoid', name='all_')(dense2)
-        filtered_output = keras.layers.dot([out, actions], axes=1)
-
-        model = keras.models.Model(input=[inp, actions], output=[filtered_output])
-
-        all_ = keras.models.Model(inputs=[inp],
-                                 outputs=model.get_layer('all_').output)
-
-        rmsprop = keras.optimizers.RMSprop(lr=0.0001, rho=0.9, epsilon=None, decay=0.0, clipnorm=1.)
-        if is_R:
-            model.compile(loss='mse', optimizer=rmsprop)
-        else:
-            model.compile(loss='binary_crossentropy', optimizer=rmsprop)
-
-        return model, all_
-
+        self.fitted = 'NN'
+        return 1.0
+    
     @threadsafe_generator
-    def T_gen(self, env, data, batchsize=32):
+    def generator(self, data, cfg, all_idxs, fixed_permutation=False,  batch_size = 64, processor=None):
+        """Data Generator for Model-Based 
 
-        frameskip = self.frameheight #lazy
-        num_batches = int(np.ceil(data.shape[0] / batchsize))
-        while True:
+        Parameters
+        ----------
+        env : obj
+            The environment object.
+        all_idxs : ndarray
+            1D array of ints representing valid datapoints from which we generate examples
+        batch_size : int
+            Minibatch size to during training
 
-            permutation = np.random.permutation(np.arange(len(data)))
-            data = data[permutation]
+        
+        Yield
+        -------
+        obj1, obj2
+            obj1: [state, action]
+            obj2: [next state, reward, is done]
+        """
 
-            for batch_idx in np.arange(num_batches):
-                low_ = batch_idx * batchsize
-                high_ = (1+batch_idx) * batchsize
-                batch = data[low_:high_]
-                x =  batch[:,:frameskip]
-                act =  batch[:, frameskip].astype(int)
-                x_ = batch[:, (frameskip+1):]
-
-                inp = env.pos_to_image(x)
-                out = np.diff(env.pos_to_image(x_), axis=1)
-
-                yield [inp, np.eye(env.n_actions)[act]], out
-
-    @threadsafe_generator
-    def D_gen(self, env, data, batchsize=32):
-
-        frameskip = self.frameheight #lazy
-        num_batches = int(np.ceil(data.shape[0] / batchsize))
-        while True:
-
-            permutation = np.random.permutation(np.arange(len(data)))
-            data = data[permutation]
-
-            for batch_idx in np.arange(num_batches):
-                low_ = batch_idx * batchsize
-                high_ = (1+batch_idx) * batchsize
-                batch = data[low_:high_]
-                x_pre =  batch[:,:frameskip]
-                act =  batch[:, frameskip].astype(int)
-                x__pre = batch[:, (frameskip+1):-1]
-                done = batch[:, -1].astype(int)
-
-                x = env.pos_to_image(x_pre)
-                x_ = env.pos_to_image(x__pre)
-
-                inp = np.concatenate([x, x_], axis=1)
-                out = done
-
-                yield [inp, np.eye(env.n_actions)[act]], out
-
-    @threadsafe_generator
-    def R_gen(self, env, data, batchsize=32):
-
-        frameskip = self.frameheight #lazy
-        num_batches = int(np.ceil(data.shape[0] / batchsize))
-        while True:
-
-            permutation = np.random.permutation(np.arange(len(data)))
-            data = data[permutation]
-
-            for batch_idx in np.arange(num_batches):
-                low_ = batch_idx * batchsize
-                high_ = (1+batch_idx) * batchsize
-                batch = data[low_:high_]
-                x =  batch[:,:frameskip]
-                act =  batch[:, frameskip].astype(int)
-                r = batch[:, (frameskip+1)]
-
-                inp = env.pos_to_image(x)
-                out = -r
-
-                yield [inp, np.eye(env.n_actions)[act]], out
-
-
-    @threadsafe_generator
-    def full_gen(self, env, all_idxs, batch_size=32):
 
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))
 
-        states = self.data.states()
-        states_ = self.data.next_states()
-        lengths = self.data.lengths()
-        rewards = self.data.rewards().reshape(-1)
-        actions = self.data.actions().reshape(-1)
-        dones = self.data.dones().reshape(-1)
+        states = data.states()
+        states_ = data.next_states()
+        lengths = data.lengths()
+        rewards = data.rewards().reshape(-1)
+        actions = data.actions().reshape(-1)
+        dones = data.dones().reshape(-1)
+
+        
 
         shp = states.shape
         states = states.reshape(np.prod(shp[:2]), -1)
@@ -319,190 +136,85 @@ class ApproxModel(object):
                 done = dones[batch_idxs]
                 act = actions[batch_idxs]
 
-                if self.modeltype in ['conv']:
-                    tmp_shp = np.hstack([len(batch_idxs),-1,shp[2:]])
-                    inp = self.processor(x.reshape(tmp_shp).squeeze())
-                    out_x_ = np.diff(self.processor(x_.reshape(tmp_shp)).squeeze(), axis=1)[:,[-1],...]
-                    out_r = -r
-                    out_done = done
-                elif self.modeltype == 'conv1':
-                    tmp_shp = np.hstack([len(batch_idxs),-1,shp[2:]])
-                    inp = self.processor(x.reshape(tmp_shp).squeeze())
-                    inp = inp[:,None,:,:]
-                    out_x_ = np.squeeze((x_-x).reshape(tmp_shp))
-                    out_x_ = out_x_[:,None,:,:]
-                    out_r = -r
-                    out_done = done
-                else:
-                    tmp_shp = np.hstack([len(batch_idxs),-1,shp[2:]])
-                    inp = np.squeeze(x.reshape(tmp_shp))
-                    out_x_ = x_
-                    out_x_ = np.diff(out_x_.reshape(tmp_shp), axis=2).reshape(-np.prod(tmp_shp[:2]), -1)
-                    out_r = -r
-                    out_done = done
-                    out_x_ = out_x_[:,None,...]
+                tmp_shp = np.hstack([len(batch_idxs),-1,shp[2:]])
+                inp = cfg.processor(x.reshape(tmp_shp).squeeze())
+                inp = inp[:,None,:,:]
+                out_x_ = np.squeeze((x_-x).reshape(tmp_shp))
+                out_x_ = out_x_[:,None,:,:]
+                out_r = -r
+                out_done = done
 
-                yield [inp, np.eye(env.n_actions)[act]], [out_x_, out_r, out_done]
+                # if self.modeltype in ['conv']:
+                #     tmp_shp = np.hstack([len(batch_idxs),-1,shp[2:]])
+                #     inp = self.processor(x.reshape(tmp_shp).squeeze())
+                #     out_x_ = np.diff(self.processor(x_.reshape(tmp_shp)).squeeze(), axis=1)[:,[-1],...]
+                #     out_r = -r
+                #     out_done = done
+                # elif self.modeltype == 'conv1':
+                #     tmp_shp = np.hstack([len(batch_idxs),-1,shp[2:]])
+                #     inp = self.processor(x.reshape(tmp_shp).squeeze())
+                #     inp = inp[:,None,:,:]
+                #     out_x_ = np.squeeze((x_-x).reshape(tmp_shp))
+                #     out_x_ = out_x_[:,None,:,:]
+                #     out_r = -r
+                #     out_done = done
+                # else:
+                #     tmp_shp = np.hstack([len(batch_idxs),-1,shp[2:]])
+                #     inp = np.squeeze(x.reshape(tmp_shp))
+                #     out_x_ = x_
+                #     out_x_ = np.diff(out_x_.reshape(tmp_shp), axis=2).reshape(-np.prod(tmp_shp[:2]), -1)
+                #     out_r = -r
+                #     out_done = done
+                #     out_x_ = out_x_[:,None,...]
+
+                yield [inp, np.eye(data.n_actions)[act]], [out_x_, out_r, out_done]
                 # yield ([x, np.eye(3)[acts], np.array(weight).reshape(-1,1)], [np.array(R).reshape(-1,1)])
 
-    @staticmethod
-    def compare(num_batches_val,val_gen,model):
-        g  = []
-        for j in range(num_batches_val):
-            x, y = next(val_gen)
-            arr = []
-            for i in range(len(y)):
-                arr.append(np.mean(np.mean((model.predict(x)[i] - y[i])**2, axis=-1)))
-            g.append(arr)
-        return g
-
-    def run(self, env, dataset, num_epochs=100, batchsize=32, modeltype='conv'):
-        '''
-        Fit NN to transitions, rewards, and done
-        '''
-
-        # Fit P(s' | s,a)
-        # Do this by change in pixels.
-        self.modeltype = modeltype
-        if self.modeltype in ['conv', 'mlp', 'conv1']:
-            im = dataset.states()[0]
-            if self.processor: im = self.processor(im)
-            input_shape = im.shape[1:]#(self.frameheight, 2)
-
-            full, full_all = self.create_full_model(input_shape)
-
-            earlyStopping = EarlyStopping(monitor='val_loss', min_delta=1e-4,  patience=5, verbose=1, mode='min', restore_best_weights=True)
-            reduce_lr_loss = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=3, verbose=1, min_delta=1e-4, mode='min')
-
-
-            self.data = dataset
-            dataset_length = self.data.num_tuples()
-            perm = np.random.permutation(range(dataset_length))
-            eighty_percent_of_set = int(.8*len(perm))
-            training_idxs = perm[:eighty_percent_of_set]
-            validation_idxs = perm[eighty_percent_of_set:]
-            training_steps_per_epoch = int(1.*np.ceil(len(training_idxs)/float(batchsize)))
-            validation_steps_per_epoch = int(np.ceil(len(validation_idxs)/float(batchsize)))
-
-            train_gen = self.full_gen(env, training_idxs, batchsize)
-            val_gen = self.full_gen(env, validation_idxs, batchsize)
-
-            hist = full.fit_generator(train_gen,
-                                    steps_per_epoch=training_steps_per_epoch,
-                                    validation_data=val_gen,
-                                    validation_steps=validation_steps_per_epoch,
-                                    epochs=num_epochs,
-                                    callbacks=[earlyStopping, reduce_lr_loss],
-                                    max_queue_size=1,
-                                    workers=1,
-                                    use_multiprocessing=False, )
-
-
-            # try:
-            #     print('Loading Full Model')
-            #     full.load_weights(os.path.join(os.getcwd(), self.filename,'full.h5'))
-            # except:
-            #     print('Failed to load. Relearning')
-            #     earlyStopping = EarlyStopping(monitor='val_loss', min_delta=1e-4,  patience=7, verbose=1, mode='min', restore_best_weights=True)
-            #     # mcp_save = ModelCheckpoint('T.hdf5', save_best_only=True, monitor='val_loss', mode='min')
-            #     reduce_lr_loss = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=4, verbose=1, min_delta=1e-5, mode='min')
-
-            #     hist = full.fit_generator(train_gen,
-            #                             steps_per_epoch=num_batches_train,
-            #                             validation_data=val_gen,
-            #                             validation_steps=num_batches_val,
-            #                             epochs=num_epochs,
-            #                             callbacks=[earlyStopping, reduce_lr_loss],
-            #                             max_queue_size=1,
-            #                             workers=4,
-            #                             use_multiprocessing=False, )
-            #     full.save_weights(os.path.join(os.getcwd(), self.filename,'full.h5'))
-        else: # Linear
-
-
-            x = dataset.states()
-            act = dataset.actions().reshape(-1)
-            r = dataset.rewards().reshape(-1)
-            x_ = dataset.next_states()
-            done = dataset.dones().reshape(-1)
-
-            inp = x.reshape(np.prod(x.shape[:2]), -1)
-            out_x_ = np.diff(x_, axis=2)
-
-            out_x_ = out_x_.reshape(np.prod(out_x_.shape[:2]), -1)
-            out_r = -r.reshape(-1)
-            out_done = done.reshape(-1)
-
-            X = np.hstack([inp, np.eye(3)[act]])
-
-            full_T = LinearRegression().fit(X, out_x_)
-            full_R = LinearRegression().fit(X, out_r)
-            full_D = LogisticRegression().fit(X, out_done)
-
-            full = [full_T, full_R, full_D]
-
-
-        self.full = full
-        return self
-
-
-    def estimate_R(self, x, a, t):
-        #Approximated rewards
-        reward = -self.R.predict([x,a]).reshape(-1)
-
-        return reward
-
-    def estimate_R_all(self, x):
-        return -self.R_all.predict([x])
-
-    def old_transition(self, x, a):
-        # Exact MDP dynamics
-        # self.P = {(0, 0): {0: 0.5, 1: 0.5}, (0, 1): {0: 0.5, 1: .5}}
-
-        #Approximated dynamics
-        # if tuple([x,a]) in self.P:
-        #     try:
-        #         state = np.random.choice(list(self.P[(x,a)]), p=list(self.P[(x,a)].values()))
-        #         if self.override_done:
-        #             done = False
-        #         else:
-        #             done = np.random.choice(list(self.D[(x,a,state)]),
-        #                                     p=list(self.D[(x,a,state)].values()))
-        #     except:
-        #         import pdb; pdb.set_trace()
+    def transition_NN(self, x, a):
+        # if isinstance(self.full, list):
+        #     state_diff, r, prob_done = [model.predict(np.hstack([x.reshape(x.shape[0],-1), a])) for model in self.full]
+        #     state_diff = state_diff[:,None,:]
+        #     prob_done = [[d] for d in prob_done]
         # else:
-        #     state = None
-        #     done = True
-        state_diff = self.T.predict([x, a])
-        x_ = np.concatenate([x[:,1:2,...], x[:,1:2,...] + state_diff], axis=1)
-
-        prob_done = self.D.predict([np.concatenate([x, x_], axis=1), a])
-        done = np.array([np.random.choice([0,1], p=[1-d[0], d[0]]) for d in prob_done])
-
-        return x_, done
-
-
-    def transition(self, x, a):
-        if isinstance(self.full, list):
-            state_diff, r, prob_done = [model.predict(np.hstack([x.reshape(x.shape[0],-1), a])) for model in self.full]
-            state_diff = state_diff[:,None,:]
-            prob_done = [[d] for d in prob_done]
-        else:
-            [state_diff, r, prob_done] = self.full.predict([x, a], batch_size=128)
+        #     
+        state_diff, r, prob_done = self.model(torch.from_numpy(x).float(), torch.from_numpy(a).bool())
+        state_diff = state_diff.detach().numpy()
+        r = r.detach().numpy()
+        prob_done = prob_done.detach().numpy()
 
         x_ = np.concatenate([x[:,1:self.frameheight,...], x[:,(self.frameheight-1):self.frameheight,...] + state_diff], axis=1)
-        done = np.array([np.random.choice([0,1], p=[1-d[0], d[0]]) for d in prob_done])
+        done = np.array([np.random.choice([0,1], p=[1-d, d]) for d in prob_done])
 
         return x_, -r.reshape(-1), done
 
-    def Q(self, policy, x, t=0):
+    def Q_NN(self, policy, x, gamma, t=0):
+        """(Linear/Neural) Return the Model-Based OPE estimate for pi_e starting from a state
+
+        Parameters
+        ----------
+        policy : obj
+            A policy object, evaluation policy.
+        x : ndarray
+            State.
+        t : int, optional
+            time
+            Default: 0
+
+        Returns
+        -------
+        list
+            The Q value starting from state x and taking each possible action
+            in the action space:
+                [Q(x, a) for a in A]
+        """
 
         Qs = []
 
         # state = x
         # make action agnostic.
-        state = np.repeat(x, self.action_space_dim, axis=0)
-        acts  = np.tile(np.arange(self.action_space_dim), len(x))
+
+        state = np.repeat(x, self.n_actions, axis=0)
+        acts  = np.tile(np.arange(self.n_actions), len(x))
 
         done = np.zeros(len(state))
         costs = []
@@ -510,11 +222,13 @@ class ApproxModel(object):
         # Q
         cost_to_go = np.zeros(len(state))
 
-        new_state, cost_holder, new_done = self.transition(state, np.atleast_2d(np.eye(self.action_space_dim)[acts]))
+
+        new_state, cost_holder, new_done = self.transition_NN(state, np.atleast_2d(np.eye(self.n_actions)[acts]))
         # cost_holder = self.estimate_R(state, np.atleast_2d(np.eye(self.action_space_dim)[acts]), None)
 
         done = done + new_done
-        new_cost_to_go = cost_to_go + self.gamma * cost_holder * (1-done)
+        new_cost_to_go = cost_to_go + gamma * cost_holder * (1-done)
+
 
         norm_change = np.sqrt(np.sum((new_cost_to_go-cost_to_go)**2) / len(state))
         # print(trajectory_length, norm_change, cost_to_go, sum(done), len(done))
@@ -536,14 +250,16 @@ class ApproxModel(object):
             still_alive = np.where(1-done)[0]
             acts = policy.sample(state[still_alive])
 
-            new_state, cost_holder, new_done = self.transition(state[still_alive], np.atleast_2d(np.eye(self.action_space_dim)[acts]))
+            new_state, cost_holder, new_done = self.transition_NN(state[still_alive], np.atleast_2d(np.eye(self.n_actions)[acts]))
 
             # cost_holder = self.estimate_R(state, np.atleast_2d(np.eye(self.action_space_dim)[acts]), trajectory_length)
             # if (tuple([state,a,new_state]) in self.terminal_transitions):
             #     done = True
 
             done[still_alive] = (done[still_alive] + new_done).astype(bool)
-            new_cost_to_go = cost_to_go[still_alive] + self.gamma * cost_holder * (1-done[still_alive])
+
+            new_cost_to_go = cost_to_go[still_alive] + gamma * cost_holder * (1-done[still_alive])
+
 
             # norm_change = np.sqrt(np.sum((new_cost_to_go-cost_to_go)**2) / len(state))
             # print(trajectory_length, norm_change, cost_to_go, sum(done), len(done))
@@ -563,10 +279,236 @@ class ApproxModel(object):
         return cost_to_go
 
 
+    def fit_tabular(self, dataset, pi_e, config, verbose=True) -> float:
+        '''
+        probability of
+        transitioning from s to s'
+        given action a is the number of
+        times this transition was observed divided by the number
+        of times action a was taken in state s. If D contains no examples
+        of action a being taken in state s, then we assume
+        that taking action a in state s always causes a transition to
+        the terminal absorbing state.
+        '''
+        # frames = np.array([x['frames'] for x in dataset])
+        # transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+        #                           np.array([x['a'] for x in dataset]).reshape(-1,1).T ,
+        #                           frames[:,1:].reshape(-1), #np.array([x['x_prime'] for x in dataset]).reshape(-1,1).T
+        #                           # np.array([x['done'] for x in dataset]).reshape(-1,1).T
+        #                          ]).T
+
+        frames = dataset.frames()
+        transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+                                  dataset.actions(False) ,
+                                  frames[:,1:].reshape(-1), #np.array([x['x_prime'] for x in dataset]).reshape(-1,1).T
+                                  # np.array([x['done'] for x in dataset]).reshape(-1,1).T
+                                 ]).T
+
+        unique, idx, count = np.unique(transitions, return_index=True, return_counts=True, axis=0)
+
+        # partial_transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+        #                           np.array([x['a'] for x in dataset]).reshape(-1,1).T ,
+        #                          ]).T
+
+        partial_transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+                                  dataset.actions(False) ,
+                                 ]).T
+
+        unique_a_given_x, idx_a_given_x, count_a_given_x = np.unique(partial_transitions, return_index=True, return_counts=True, axis=0)
+
+        # key=(state, action). value= number of times a was taking in state
+        all_counts_a_given_x = {tuple(key):value for key,value in zip(unique_a_given_x,count_a_given_x)}
+
+        prob = {}
+        for idx,row in enumerate(unique):
+            if tuple(row[:-1]) in prob:
+                prob[tuple(row[:-1])][row[-1]] = count[idx] / all_counts_a_given_x[(row[0],row[1])]
+            else:
+                prob[tuple(row[:-1])] = {}
+                prob[tuple(row[:-1])][row[-1]] = count[idx] / all_counts_a_given_x[(row[0],row[1])]
+
+        # if self.absorbing is not None:
+        #     for act in np.arange(self.action_space_dim):
+        #         prob[tuple([self.absorbing[0], act])] = {self.absorbing[0]:1.}
+
+        self.P = prob
+
+        # all_transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+        #                               np.array([x['a'] for x in dataset]).reshape(-1,1).T ,
+        #                               frames[:,1:].reshape(-1), #np.array([x['x_prime'] for x in dataset]).reshape(-1,1).T ,
+        #                               np.array([x['done'] for x in dataset]).reshape(-1,1).T ,
+        #                          ]).T
+        all_transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+                                      dataset.actions(False) ,
+                                      frames[:,1:].reshape(-1), #np.array([x['x_prime'] for x in dataset]).reshape(-1,1).T ,
+                                      dataset.dones(False) ,
+                                 ]).T
+
+        unique, idx, count = np.unique(all_transitions, return_index=True, return_counts=True, axis=0)
+
+
+        unique_a_given_x, idx_a_given_x, count_a_given_x = np.unique(transitions, return_index=True, return_counts=True, axis=0)
+
+        # key=(state, action). value= number of times a was taking in state
+        all_counts_a_given_x = {tuple(key):value for key,value in zip(unique_a_given_x,count_a_given_x)}
+
+        done = {}
+        for idx,row in enumerate(unique):
+            if tuple(row[:-1]) in done:
+                done[tuple(row[:-1])][row[-1]] = count[idx] / all_counts_a_given_x[tuple(row[:-1])]
+            else:
+                done[tuple(row[:-1])] = {}
+                done[tuple(row[:-1])][row[-1]] = count[idx] / all_counts_a_given_x[tuple(row[:-1])]
+        self.D = done
+        # self.terminal_transitions = {tuple([x,a,x_prime]):1 for x,a,x_prime in all_transitions[all_transitions[:,-1] == True][:,:-1]}
+
+        # Actually fitting R, not Q_k
+        # self.Q_k = self.model #init_Q(model_type=self.model_type)
+        # X_a = np.array(zip(dataset['x'],dataset['a']))#dataset['state_action']
+        # x_prime = dataset['x_prime']
+        # index_of_skim = self.skim(X_a, x_prime)
+        # self.fit(X_a[index_of_skim], dataset['cost'][index_of_skim], batch_size=len(index_of_skim), verbose=0, epochs=1000)
+        # self.reward = self
+        # self.P = prob
+
+        if self.override_done:
+            # transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+            #                           np.array([x['a'] for x in dataset]).reshape(-1,1).T ,
+            #                           np.array([range(len(x['x'])) for x in dataset]).reshape(-1,1).T,
+            #                           np.array([x['r'] for x in dataset]).reshape(-1,1).T ,
+            #                          ]).T
+
+            # partial_transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+            #                       np.array([x['a'] for x in dataset]).reshape(-1,1).T ,
+            #                       np.array([range(len(x['x'])) for x in dataset]).reshape(-1,1).T,
+            #                      ]).T
+            transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+                                      dataset.actions(False) ,
+                                      dataset.ts(False),
+                                      dataset.rewards(False) ,
+                                     ]).T
+
+            partial_transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+                                  dataset.actions(False) ,
+                                  dataset.ts(False),
+                                 ]).T
+        else:
+            # transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+            #                           np.array([x['a'] for x in dataset]).reshape(-1,1).T ,
+            #                           np.array([x['r'] for x in dataset]).reshape(-1,1).T ,
+            #                          ]).T
+
+            # partial_transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+            #                       np.array([x['a'] for x in dataset]).reshape(-1,1).T ,
+            #                      ]).T
+            transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+                                      dataset.actions(False) ,
+                                      dataset.rewards(False) ,
+                                     ]).T
+
+            partial_transitions = np.vstack([ frames[:,:-1].reshape(-1), #np.array([x['x'] for x in dataset]).reshape(-1,1).T ,
+                                  dataset.actions(False) ,
+                                 ]).T
+
+        unique, idxs, counts = np.unique(transitions, return_index=True, return_counts=True, axis=0)
+
+        unique_a_given_x, idx_a_given_x, count_a_given_x = np.unique(partial_transitions, return_index=True, return_counts=True, axis=0)
+
+        # key=(state, action). value= number of times a was taking in state
+        all_counts_a_given_x = {tuple(key):value for key,value in zip(unique_a_given_x,count_a_given_x)}
+
+        rew = {}
+        for idx,row in enumerate(unique):
+            if tuple(row[:-1]) in rew:
+                rew[tuple(row[:-1])][row[-1]] = counts[idx] / all_counts_a_given_x[tuple(row[:-1])]
+            else:
+                rew[tuple(row[:-1])] = {}
+                rew[tuple(row[:-1])][row[-1]] = counts[idx] / all_counts_a_given_x[tuple(row[:-1])]
+
+        self.R = rew
+        self.fitted = 'tabular'
+
+    def estimate_R(self, x, a, t):
+        # Exact R
+        # self.R = {(0, 0): {-1: .06, 0: .5, 1: .44}, (0, 1): {-1: .06, 0: .5, 1: .44}}
+
+        #Approximated rewards
+        if len(list(self.R)[0]) == 3:
+            key = tuple([x,a,t])
+        else:
+            key = tuple([x,a])
+
+        if key in self.R:
+            try:
+                reward = np.random.choice(list(self.R[key]), p=list(self.R[key].values()))
+            except:
+                import pdb; pdb.set_trace()
+        else:
+            reward = 0
+
+        return reward
+
+    def transition_tabular(self, x, a):
+        # Exact MDP dynamics
+        # self.P = {(0, 0): {0: 0.5, 1: 0.5}, (0, 1): {0: 0.5, 1: .5}}
+
+        #Approximated dynamics
+        if tuple([x,a]) in self.P:
+            try:
+                state = np.random.choice(list(self.P[(x,a)]), p=list(self.P[(x,a)].values()))
+                if self.override_done:
+                    done = False
+                else:
+                    done = np.random.choice(list(self.D[(x,a,state)]),
+                                            p=list(self.D[(x,a,state)].values()))
+            except:
+                import pdb; pdb.set_trace()
+        else:
+            state = None
+            done = True
+
+        return state, done
+
+    def Q_tabular(self, policy, x, gamma, t=0):
+        all_Qs = []
+        for t, X in enumerate(x):
+            Qs = []
+            for a in range(self.n_actions):
+                state = X[0][0]
+                if isinstance(a, type(np.array([]))) or isinstance(a, list):
+                    assert len(a) == 1
+                    a = a[0]
+                done = False
+                costs = []
+                trajectory_length = t
+                # Q
+                while not done:
+
+                    new_state, done = self.transition_tabular(state, a)
+                    costs.append( self.estimate_R(state, a, trajectory_length) )
+                    # if (tuple([state,a,new_state]) in self.terminal_transitions):
+                    #     done = True
+
+                    trajectory_length += 1
+                    if self.max_traj_length is not None:
+                        if trajectory_length >= self.max_traj_length:
+                            done = True
+
+                    if not done:
+                        state = new_state
+                        a = policy([state])[0]
+
+                Qs.append(self.discounted_sum(costs, gamma))
+            all_Qs.append(Qs)
+        return np.array(all_Qs)    
+
+
     @staticmethod
     def discounted_sum(costs, discount):
         '''
         Calculate discounted sum of costs
         '''
         y = signal.lfilter([1], [1, -discount], x=costs[::-1])
+
         return y[::-1][0]
+

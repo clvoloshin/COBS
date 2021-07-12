@@ -1,54 +1,29 @@
 
+from ope.algos.direct_method import DirectMethodQ
 import sys
 import numpy as np
 import pandas as pd
 sys.path.append("..")
 from copy import deepcopy
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-import keras
-from keras.models     import Sequential
-from keras.layers     import Dense, Conv2D, Flatten, MaxPool2D, concatenate, UpSampling2D, Reshape, Lambda
-from keras.optimizers import Adam
-from keras import backend as K
-import tensorflow as tf
 from tqdm import tqdm
 from ope.utls.thread_safe import threadsafe_generator
-from keras import regularizers
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from functools import partial
 
+import torch
+torch.backends.cudnn.benchmark = True
+import torch.nn as nn
+import torch.optim as optim
+import torch.autograd as autograd
+import torch.nn.functional as F
+torch.autograd.set_detect_anomaly(True)
 
-class DirectMethodRegression(object):
+
+class DirectMethodRegression(DirectMethodQ):
     """Algorithm: Direct Model Regression (Q-Reg).
     """
-    def __init__(self, data, gamma, frameskip=2, frameheight=2, modeltype = 'conv', processor=None):
-        """
-        Parameters
-        ----------
-        data : obj
-            The logging (historial) dataset.
-        gamma : float
-            Discount factor.
-        frameskip : int, optional, deprecated.
-            Deprecated.
-        frameheight : int, optional, deprecated.
-            Deprecated.
-        modeltype: str, optional
-            The type of model to represent the Q function.
-            Default: 'conv'
-        processor: function, optional
-            Receives state as input and converts it into a different form.
-            The new form becomes the input to the direct method.
-            Default: None
-        """
-        self.data = data
-        self.gamma = gamma
-        self.frameskip = frameskip
-        self.frameheight = frameheight
-        self.modeltype = modeltype
-        self.processor = processor
-
-        # self.setup(deepcopy(self.trajectories))
+    def __init__(self) -> None:
+        DirectMethodQ.__init__(self)
 
     def wls_sherman_morrison(self, phi_in, rewards_in, omega_in, lamb, omega_regularizer, cond_number_threshold_A, block_size=None):
         """Weighted Least Squares via Sherman Morrison Algorithm.
@@ -131,7 +106,7 @@ class DirectMethodRegression(object):
         weight = weight_prim.reshape((-1,))
         return weight
 
-    def run(self, pi_b, pi_e, epsilon=0.001):
+    def fit_tabular(self, data, pi_e, config, verbose = True):
         """(Tabular) Get the Q-Reg OPE Q function for pi_e via weighted least squares.
 
         Parameters
@@ -148,14 +123,19 @@ class DirectMethodRegression(object):
         obj, DMModel
             An object representing the Q function
         """
+        cfg = config.models['Q-Reg']
+        epsilon = cfg['convergence_epsilon']
+        max_epochs = cfg['max_epochs']
+        gamma = config.gamma
 
-        dataset = self.data.all_transitions()
-        frames = self.data.frames()
-        omega = self.data.omega()
-        rewards = self.data.rewards()
+        full_dataset = data
+        dataset = data.all_transitions()
+        frames = data.frames()
+        omega = data.omega()
+        rewards = data.rewards()
 
         omega = [np.cumprod(om) for om in omega]
-        gamma_vec = self.gamma**np.arange(max([len(x) for x in omega]))
+        gamma_vec = gamma**np.arange(max([len(x) for x in omega]))
 
         factors, Rs = [], []
         for data in dataset:
@@ -166,20 +146,34 @@ class DirectMethodRegression(object):
             Rs.append( np.sum( omega[i][t:]/omega[i][t] * gamma_vec[t:]/gamma_vec[t] *  rewards[i][t:] )  )
             factors.append( gamma_vec[t] * omega[i][t] )
 
-        self.alpha = 1
-        self.lamb = 1
-        self.cond_number_threshold_A = 1
+        alpha = 1
+        lamb = 1
+        cond_number_threshold_A = 1
         block_size = len(dataset)
 
-        phi = self.compute_grid_features()
-        self.weight = self.wls_sherman_morrison(phi, Rs, factors, self.lamb, self.alpha, self.cond_number_threshold_A, block_size)
+        phi = self.compute_grid_features(full_dataset)
+        self.weight = self.wls_sherman_morrison(phi, Rs, factors, lamb, alpha, cond_number_threshold_A, block_size)
 
-        return DMModel(self.weight,
-                        self.data,
-                        self.compute_feature)
+        
+        self.n_dim = full_dataset.n_dim
+        self.n_actions = full_dataset.n_actions
 
+        self.fitted = 'tabular'
 
-    def compute_feature(self, state, action, step):
+    def Q_tabular(self, states, actions=None) -> np.ndarray:
+        if actions is None:
+            Q = np.array([[np.matmul(self.weight, self.compute_feature(s, a, 0, self.n_dim, self.n_actions)) for a in range(self.n_actions)] for s in np.squeeze(states)])
+            return Q
+        else:
+            #TODO
+            NotImplemented
+            # import pdb; pdb.set_trace()
+            # Q = []
+            # for (s,a) in zip(states, actions):
+            #     Q.append(np.matmul(self.weight, self.compute_feature(s, a, 0, self.n_dim, self.n_actions)))
+            # return np.array(Q)
+
+    def compute_feature(self, state, action, step, n_dim, n_actions):
         """Feature map. One hot encoding of state-action.
 
         Parameters
@@ -198,10 +192,6 @@ class DirectMethodRegression(object):
             phi[state, action] = 1 otherwise 0.
         """
 
-        T = max(self.data.lengths())
-        n_dim = self.data.n_dim
-        n_actions = self.data.n_actions
-
         # feature_dim = n_dim + n_actions
         # feature_dim =
         phi = np.zeros((n_dim, n_actions))
@@ -216,7 +206,7 @@ class DirectMethodRegression(object):
 
         return phi
 
-    def compute_grid_features(self):
+    def compute_grid_features(self, data):
         """Get features for the dataset.
 
         Parameters
@@ -230,211 +220,40 @@ class DirectMethodRegression(object):
             Each row represents the feature phi(state, action)
         """
 
-        T = max(self.data.lengths())
-        n_dim = self.data.n_dim
-        n_actions = self.data.n_actions
+        T = max(data.lengths())
+        n_dim = data.n_dim
+        n_actions = data.n_actions
 
 
-        n = len(self.data)
+        n = len(data)
 
 
         data_dim = n * T
 
         phi = data_dim * [None]
 
-        lengths = self.data.lengths()
+        lengths = data.lengths()
         for i in range(n):
-            states = self.data.states(False, i, i+1)
-            actions = self.data.actions()[i]
+            states = data.states(False, i, i+1)
+            actions = data.actions()[i]
 
             for t in range(max(lengths)):
                 if t < lengths[i]:
                     s = states[t]
                     action = int(actions[t])
-                    phi[i * T + t] = self.compute_feature(s, action, t)
+                    phi[i * T + t] = self.compute_feature(s, action, t, n_dim, n_actions)
                 else:
                     phi[i * T + t] = np.zeros(len(phi[0]))
 
         return np.array(phi, dtype='float')
 
-    @staticmethod
-    def build_model(input_size, scope, action_space_dim=3, modeltype='conv'):
-        """Build NN Q function.
-
-        Parameters
-        ----------
-        input_size : ndarray
-            (# Channels, # Height, # Width)
-        scope: str
-            Name for the NN
-        action_space_dim : int, optional
-            Action space cardinality. 
-            Default: 3
-        modeltype : str, optional
-            The model type to be built.
-            Default: 'conv'
-        
-        Returns
-        -------
-        obj1, obj2, obj3
-            obj1: Compiled model with weighted loss
-            obj2: Forward model Q(s,a) -> R
-            obj3: Forward model Q(s) -> R^|A| 
-        """
-        
-        inp = keras.layers.Input(input_size, name='frames')
-        actions = keras.layers.Input((action_space_dim,), name='mask')
-        factors = keras.layers.Input((1,), name='weights')
-
-        # conv1 = Conv2D(64, kernel_size=16, strides=2, activation='relu', data_format='channels_first')(inp)
-        # #pool1 = MaxPool2D(data_format='channels_first')(conv1)
-        # conv2 = Conv2D(64, kernel_size=8, strides=2, activation='relu', data_format='channels_first')(conv1)
-        # #pool2 = MaxPool2D(data_format='channels_first')(conv2)
-        # conv3 = Conv2D(64, kernel_size=4, strides=2, activation='relu', data_format='channels_first')(conv2)
-        # #pool3 = MaxPool2D(data_format='channels_first')(conv3)
-        # flat = Flatten()(conv3)
-        # dense1 = Dense(10, activation='relu')(flat)
-        # dense2 = Dense(30, activation='relu')(dense1)
-        # out = Dense(action_space_dim, activation='linear', name=scope+ 'all_Q')(dense2)
-        # filtered_output = keras.layers.dot([out, actions], axes=1)
-
-        # model = keras.models.Model(input=[inp, actions], output=[filtered_output])
-
-        # all_Q = keras.models.Model(inputs=[inp],
-        #                          outputs=model.get_layer(scope + 'all_Q').output)
-
-        # rmsprop = keras.optimizers.RMSprop(lr=0.0005, rho=0.9, epsilon=1e-5, decay=0.0)
-        # model.compile(loss='mse', optimizer=rmsprop)
-
-        def init(): return keras.initializers.TruncatedNormal(mean=0.0, stddev=0.1, seed=np.random.randint(2**32))
-        if modeltype == 'conv':
-            conv1 = Conv2D(8, (7,7), strides=(3,3), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(inp)
-            pool1 = MaxPool2D(data_format='channels_first')(conv1)
-            conv2 = Conv2D(16, (3,3), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(pool1)
-            pool2 = MaxPool2D(data_format='channels_first')(conv2)
-            flat1 = Flatten(name='flattened')(pool2)
-            out = Dense(256, activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(flat1)
-        elif modeltype == 'conv1':
-            def init(): return keras.initializers.TruncatedNormal(mean=0.0, stddev=0.001, seed=np.random.randint(2**32))
-            conv1 = Conv2D(16, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(inp)
-            # pool1 = MaxPool2D(data_format='channels_first')(conv1)
-            # conv2 = Conv2D(16, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(pool1)
-            # pool2 = MaxPool2D(data_format='channels_first')(conv2)
-            flat1 = Flatten(name='flattened')(conv1)
-            out = Dense(8, activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(flat1)
-            out = Dense(8, activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(out)
+    def Q_NN(self, states, actions=None) -> np.ndarray:
+        if actions is None:
+            return self.Q_k.predict(torch.from_numpy(states).float()).detach().numpy()
         else:
-            def init(): return keras.initializers.TruncatedNormal(mean=0.0, stddev=.1, seed=np.random.randint(2**32))
-            # flat = Flatten()(inp)
-            # dense1 = Dense(256, activation='relu',kernel_initializer=init(), bias_initializer=init())(flat)
-            # dense2 = Dense(256, activation='relu',kernel_initializer=init(), bias_initializer=init())(dense1)
-            # dense3 = Dense(128, activation='relu',kernel_initializer=init(), bias_initializer=init())(dense2)
-            # out = Dense(32, activation='relu', name='out',kernel_initializer=init(), bias_initializer=init())(dense3)
-            flat = Flatten()(inp)
-            dense1 = Dense(16, activation='relu',kernel_initializer=init(), bias_initializer=init())(flat)
-            # dense2 = Dense(256, activation='relu',kernel_initializer=init(), bias_initializer=init())(dense1)
-            dense3 = Dense(8, activation='relu',kernel_initializer=init(), bias_initializer=init())(dense1)
-            out = Dense(4, activation='relu', name='out',kernel_initializer=init(), bias_initializer=init())(dense3)
-
-
-
-        all_actions = Dense(action_space_dim, name=scope + 'all_Q', activation="linear",kernel_initializer=init(), bias_initializer=init())(out)
-
-        output = keras.layers.dot([all_actions, actions], 1)
-
-        model = keras.models.Model(inputs=[inp, actions], outputs=output)
-
-        model1 = keras.models.Model(inputs=[inp, actions, factors], outputs=output)
-
-        all_Q = keras.models.Model(inputs=[inp],
-                                 outputs=model.get_layer(scope + 'all_Q').output)
-
-        # rmsprop = keras.optimizers.RMSprop(lr=0.005, rho=0.95, epsilon=1e-08, decay=1e-3)#, clipnorm=1.)
-        adam = keras.optimizers.Adam()
-
-        def DMloss(y_true, y_pred, weights):
-            return K.sum(weights * K.square(y_pred - y_true))
-
-        weighted_loss = partial(DMloss, weights=factors)
-
-
-
-        model1.compile(loss=weighted_loss, optimizer=adam, metrics=['accuracy'])
-        # print(model.summary())
-        return model1, model, all_Q
-
-    @staticmethod
-    def copy_over_to(source, target):
-        """Copy source NN weights to target NN weights.
-        """
-        target.set_weights(source.get_weights())
-
-    @staticmethod
-    def weight_change_norm(model, target_model):
-        norm_list = []
-        number_of_layers = len(model.layers)
-        for i in range(number_of_layers):
-            model_matrix = model.layers[i].get_weights()
-            target_model_matrix = target_model.layers[i].get_weights()
-            if len(model_matrix) >0:
-                #print "layer ", i, " has shape ", model_matrix[0].shape
-                if model_matrix[0].shape[0] > 0:
-                    norm_change = np.linalg.norm(model_matrix[0]-target_model_matrix[0])
-                    norm_list.append(norm_change)
-        return sum(norm_list)*1.0/len(norm_list)
-
-    def run_linear(self, env, pi_b, pi_e, max_epochs, epsilon=.001):
-        """(Linear) Get the Q-Reg OPE estimate for pi_e via weighted least squares.
-
-        Parameters
-        ----------
-        env : obj
-            The environment object.
-        pi_b : obj
-            A policy object, behavior policy.
-        pi_e: obj
-            A policy object, evaluation policy.
-        max_epochs : int
-            Max number of iterations
-        epsilon : float
-            Convergence criteria.
-            Default: 0.001
-        
-        Returns
-        -------
-        obj
-            sklearn LinearReg object representing the Q function
-        """
-        self.Q_k = LinearRegression()
-
-        states = self.data.states()
-        states = states.reshape(-1,np.prod(states.shape[2:]))
-        lengths = self.data.lengths()
-        omega = self.data.omega()
-        rewards = self.data.rewards()
-        actions = self.data.actions().reshape(-1)
-
-        omega = [np.cumprod(om) for om in omega]
-        gamma_vec = self.gamma**np.arange(max([len(x) for x in omega]))
-
-        factors, Rs = [], []
-        for traj_num, ts in enumerate(self.data.ts()):
-            for t in ts:
-                i,t = int(traj_num), int(t)
-                if omega[i][t]:
-                    Rs.append( np.sum( omega[i][t:]/omega[i][t] * gamma_vec[t:]/gamma_vec[t] *  rewards[i][t:] )  )
-                else:
-                    Rs.append( 0 )
-                factors.append( gamma_vec[t] * omega[i][t] )
-
-        Rs = np.array(Rs)
-        factors = np.array(factors)
-
-        actions = np.eye(self.data.n_actions)[actions]
-        return self.Q_k.fit(np.hstack([states, actions]), Rs, factors)
-
-
-    def run_NN(self, env, pi_b, pi_e, max_epochs, epsilon=0.001):
+            return self.Q_k.predict(torch.from_numpy(states).float())[np.arange(len(actions)), actions].detach().numpy()
+    
+    def fit_NN(self, data, pi_e, config, verbose=True) -> float:
         """(Neural) Get the Q-Reg OPE estimate for pi_e via weighted least squares.
 
         Parameters
@@ -456,54 +275,56 @@ class DirectMethodRegression(object):
             obj1: Fitted Forward model Q(s,a) -> R
             obj2: Fitted Forward model Q(s) -> R^|A| 
         """
-        self.dim_of_actions = env.n_actions
-        self.Q_k = None
-        self.Q_k_minus_1 = None
-
-        earlyStopping = EarlyStopping(monitor='val_loss', min_delta=1e-4,  patience=5, verbose=1, mode='min', restore_best_weights=True)
-        mcp_save = ModelCheckpoint('dm_regression.hdf5', save_best_only=True, monitor='val_loss', mode='min')
-        reduce_lr_loss = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=3, verbose=1, min_delta=1e-4, mode='min')
-
-        self.more_callbacks = [earlyStopping, reduce_lr_loss]
-
-        # if self.modeltype == 'conv':
-        #     im = self.trajectories.states()[0,0,...] #env.pos_to_image(np.array(self.trajectories[0]['x'][0])[np.newaxis,...])
-        # else:
-        #     im = np.array(self.trajectories[0]['frames'])[np.array(self.trajectories[0]['x'][0]).astype(int)][np.newaxis,...]
-        im = self.data.states()[0]
-        if self.processor: im = self.processor(im)
-        self.Q_k, self.Q, self.Q_k_all = self.build_model(im.shape[1:], 'Q_k', modeltype=self.modeltype, action_space_dim=env.n_actions)
-
+        cfg = config.models['Q-Reg']
+        processor = config.processor
+        
+        # TODO: early stopping + lr reduction
+        
+        im = data.states()[0]
+        if processor: im = processor(im)
+        self.Q_k = cfg['model'](im.shape[1:], data.n_actions)
+        optimizer = optim.Adam(self.Q_k.parameters())
+        
         print('Training: Model Free')
         losses = []
-        for k in tqdm(range(1)):
-            batch_size = 32
+        
+        batch_size = cfg['batch_size']
+        dataset_length = data.num_tuples()
+        perm = np.random.permutation(range(dataset_length))
+        eighty_percent_of_set = int(.8*len(perm))
+        training_idxs = perm[:eighty_percent_of_set]
+        validation_idxs = perm[eighty_percent_of_set:]
+        training_steps_per_epoch = int(1.*np.ceil(len(training_idxs)/float(batch_size)))
+        validation_steps_per_epoch = int(np.ceil(len(validation_idxs)/float(batch_size)))
+        
+        for k in tqdm(range(cfg['max_epochs'])):
+            train_gen = self.generator(data, config, training_idxs, fixed_permutation=True, batch_size=batch_size, processor=processor)
+            val_gen = self.generator(data, config, training_idxs, fixed_permutation=True, batch_size=batch_size, processor=processor)
 
-            dataset_length = self.data.num_tuples()
-            perm = np.random.permutation(range(dataset_length))
-            eighty_percent_of_set = int(.8*len(perm))
-            training_idxs = perm[:eighty_percent_of_set]
-            validation_idxs = perm[eighty_percent_of_set:]
-            training_steps_per_epoch = int(1.*np.ceil(len(training_idxs)/float(batch_size)))
-            validation_steps_per_epoch = int(np.ceil(len(validation_idxs)/float(batch_size)))
-            train_gen = self.generator(env, pi_e, training_idxs, fixed_permutation=True, batch_size=batch_size)
-            val_gen = self.generator(env, pi_e, validation_idxs, fixed_permutation=True, batch_size=batch_size, is_train=False)
+            M = 5
+        
+            for step in range(training_steps_per_epoch):
+                
+                with torch.no_grad():
+                    inp, out = next(train_gen)
+                    states = torch.from_numpy(inp[0]).float()
+                    actions = torch.from_numpy(inp[1]).bool()
+                    output = torch.from_numpy(out[0]).float()
 
-            hist = self.Q_k.fit_generator(train_gen,
-                               steps_per_epoch=training_steps_per_epoch,
-                               validation_data=val_gen,
-                               validation_steps=validation_steps_per_epoch,
-                               epochs=max_epochs,
-                               max_queue_size=1,
-                               workers=1,
-                               use_multiprocessing=False,
-                               verbose=1,
-                               callbacks = self.more_callbacks)
+                prediction = self.Q_k(states, actions)
+                loss = (prediction - output).pow(2).mean()
+                
+                optimizer.zero_grad()
+                loss.backward()
 
-        return self.Q_k, self.Q_k_all
+                torch.nn.utils.clip_grad_norm_(self.Q_k.parameters(), cfg['clipnorm'])
+                optimizer.step()
+
+        self.fitted = 'NN'
+        return 1.0
 
     @threadsafe_generator
-    def generator(self, env, pi_e, all_idxs, fixed_permutation=False,  batch_size = 64, is_train=True):
+    def generator(self, data, cfg, all_idxs, fixed_permutation=False,  batch_size = 64, processor=None):
         """Data Generator for fitting Q-Reg model
 
         Parameters
@@ -519,8 +340,6 @@ class DirectMethodRegression(object):
             Default: False
         batch_size : int
             Minibatch size to during training
-        is_train : bool
-            Deprecated 
 
         
         Yield
@@ -532,18 +351,18 @@ class DirectMethodRegression(object):
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))
 
-        states = self.data.states()
+        states = data.states()
         states = states.reshape(tuple([-1]) + states.shape[2:])
-        lengths = self.data.lengths()
-        omega = self.data.omega()
-        rewards = self.data.rewards()
-        actions = self.data.actions().reshape(-1)
+        lengths = data.lengths()
+        omega = data.omega()
+        rewards = data.rewards()
+        actions = data.actions().reshape(-1)
 
         omega = [np.cumprod(om) for om in omega]
-        gamma_vec = self.gamma**np.arange(max([len(x) for x in omega]))
+        gamma_vec = cfg.gamma**np.arange(max([len(x) for x in omega]))
 
         factors, Rs = [], []
-        for traj_num, ts in enumerate(self.data.ts()):
+        for traj_num, ts in enumerate(data.ts()):
             for t in ts:
                 i,t = int(traj_num), int(t)
                 if omega[i][t]:
@@ -555,7 +374,7 @@ class DirectMethodRegression(object):
         Rs = np.array(Rs)
         factors = np.array(factors)
 
-        dones = self.data.dones()
+        dones = data.dones()
         alpha = 1.
 
         # Rebalance dataset
@@ -572,86 +391,15 @@ class DirectMethodRegression(object):
 
         dones = dones.reshape(-1)
 
-        # if is_train:
-        #     while True:
-        #         batch_idxs = np.random.choice(all_idxs, batch_size, p = probs)
-
-        #         x = states[batch_idxs]
-        #         weight = factors[batch_idxs]
-        #         R = Rs[batch_idxs]
-        #         acts = actions[batch_idxs]
-
-        #         yield ([x, np.eye(3)[acts], np.array(weight).reshape(-1,1)], [np.array(R).reshape(-1,1)])
-        # else:
-        #
         while True:
             perm = np.random.permutation(all_idxs)
             for batch in np.arange(steps):
                 batch_idxs = perm[(batch*batch_size):((batch+1)*batch_size)]
 
                 x = states[batch_idxs]
-                if self.processor: x = self.processor(x)
+                if processor: x = processor(x)
                 weight = factors[batch_idxs] #* probs[batch_idxs]
                 R = Rs[batch_idxs]
                 acts = actions[batch_idxs]
 
-                yield ([x, np.eye(env.n_actions)[acts], np.array(weight).reshape(-1,1)], [np.array(R).reshape(-1,1)])
-
-
-
-
-class DMModel(object):
-    """Direct Model Regression (Q-Reg) Tabular Model
-    """
-    def __init__(self, weights, data, feature_map):
-        """
-        Parameters
-        ----------
-        weights : ndarray
-            1D array of weights
-        data : obj
-            The logging (historial) dataset.
-        compute_feature : function
-            computes feature from state, action
-        """
-        self.weights = weights
-        self.data = data
-        self.compute_feature = feature_map
-
-    def predict(self, x):
-        """Get Q-Reg Q value for state, action.
-
-        Parameters
-        ----------
-        x : ndarray
-            2D array of the form [[state, -- 1 hot action --],...]
-        
-        Returns
-        -------
-        ndarray
-            Q(state, action) for each state,action in the input
-        """
-        
-        if (self.data.n_dim + self.data.n_actions) == x.shape[1]:
-            
-            acts = np.argmax(x[:,-self.data.n_actions:], axis=1)
-            S = x[:,:self.data.n_dim]
-
-            Q = np.zeros(x.shape[0])
-            for i, (s, a) in enumerate(zip(S, acts)):
-                s = int(s)
-                a = int(a)
-                Q[i] = np.matmul(self.weights, self.compute_feature(s, a, 0))
-
-            return Q
-        elif (1 + self.data.n_actions) == x.shape[1]:
-            acts = np.argmax(x[:,-self.data.n_actions:], axis=1)
-            S = x[:,:1]
-
-            Q = np.zeros(x.shape[0])
-            for i, (s, a) in enumerate(zip(S, acts)):
-                Q[i] = np.matmul(self.weights, self.compute_feature(s, a, 0))
-
-            return Q
-        else:
-            raise
+                yield ([x, np.eye(data.n_actions)[acts], np.array(weight).reshape(-1,1)], [np.array(R).reshape(-1,1)])

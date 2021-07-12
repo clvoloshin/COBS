@@ -1,275 +1,171 @@
+from ope.algos.direct_method import DirectMethodWeight
 import numpy as np
-import tensorflow as tf
 from time import sleep
 import sys
 import os
 from tqdm import tqdm
-from tensorflow.python import debug as tf_debug
 import json
 
 from scipy.optimize import linprog
 from scipy.optimize import minimize
 import quadprog
 
-import keras
-from keras.layers     import Dense, Conv2D, Flatten, MaxPool2D, concatenate, UpSampling2D, Reshape, Lambda, Conv2DTranspose
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-from keras.optimizers import Adam
-from keras import backend as K
 from tqdm import tqdm
 
 from ope.utls.thread_safe import threadsafe_generator
-from keras import regularizers
 
-# Hyper parameter
-#Learning_rate = 1e-3
-#initial_stddev = 0.5
+import torch
+torch.backends.cudnn.benchmark = True
+import torch.nn as nn
+import torch.optim as optim
+import torch.autograd as autograd
+import torch.nn.functional as F
+torch.autograd.set_detect_anomaly(True)
 
-#Training Parameter
-# training_batch_size = 1024 #1024 * 2**2
-# training_maximum_iteration = 40001
-# TEST_NUM = 0
-# NUMBER_OF_REPEATS = 1
 
-class InfiniteHorizonOPE(object):
+class InfiniteHorizonOPE(DirectMethodWeight):
     """Algorithm: Infinite Horizon (IH).
     """
-    def __init__(self, data, w_hidden, Learning_rate, reg_weight, gamma, discrete, modeltype, env=None, processor=None):
-        """
-        Parameters
-        ----------
-        data : obj
-            The logging (historial) dataset.
-        w_hidden : int
-            Deprecated.
-        Learning_rate : float
-            Deprecated.
-        reg_weight : float
-            Deprecated.
-        gamma: float
-            Discount factor. Should be between 0 and 1.
-        discrete: bool
-            Tabular or not
-        modeltype: str
-            The type of model to represent the Q function.
-        env: obj, optional
-            The environment object
-        processor: function, optional
-            Receives state as input and converts it into a different form.
-            The new form becomes the input to the direct method.
-            Default: None
-        """
-        self.data = data
-        self.modeltype = modeltype
-        self.gamma = gamma
-        self.is_discrete = discrete
-        self.processor = processor
-        if self.is_discrete:
-            self.obs_dim = env.num_states() if env is not None else self.data.num_states()
-            self.den_discrete = Density_Ratio_discounted(self.obs_dim, gamma)
-        else:
-            # self.g = tf.Graph()
-            # with self.g.as_default():
-            #     with tf.variable_scope('infhorizon', reuse=False):
-            #         self._build_graph(w_hidden, Learning_rate, reg_weight)
-            #         self._init_session()
-            pass
+    def __init__(self) -> None:
+        DirectMethodWeight.__init__(self)
+    
+    def fit_tabular(self, data, pi_e, cfg):
+        S = np.squeeze(data.states())
+        SN = np.squeeze(data.next_states())
+        PI0 = data.base_propensity()
+        PI1 = data.target_propensity()
+        REW = data.rewards()
+        ACTS = data.actions()
 
-    def build_model(self, input_size, scope, action_space_dim=3, modeltype='conv'):
-        """Build NN Q function.
+        den_discrete = Density_Ratio_discounted(data.n_dim, cfg.gamma)
 
-        Parameters
-        ----------
-        input_size : ndarray
-            (# Channels, # Height, # Width)
-        scope: str
-            Name for the NN
-        action_space_dim : int, optional
-            Action space cardinality. 
-            Default: 3
-        modeltype : str, optional
-            The model type to be built.
-            Default: 'conv'
+        for episode in range(len(S)):
+            discounted_t = 1.0
+            initial_state = S[episode][0]
+            for (s,a,sn,r,pi1,pi0) in zip(S[episode],ACTS[episode],SN[episode], REW[episode], PI1[episode], PI0[episode]):
+                discounted_t *= cfg.gamma
+                policy_ratio = (pi1/pi0)[a]
+                den_discrete.feed_data(s, sn, initial_state, policy_ratio, discounted_t)
+            den_discrete.feed_data(-1, initial_state, initial_state, 1, 1-discounted_t)
+
+
+        self.x, self.w = den_discrete.density_ratio_estimate()
+        self.fitted = 'tabular'
+          
+    def evaluate_tabular(self, data, cfg):
         
-        Returns
-        -------
-        obj1, obj2
-            obj1: Compiled model
-            obj2: Forward model W(s) -> R^|A|, weights 
-        """
-        isStart = keras.layers.Input(shape=(1,), name='dummy')
-        state =  keras.layers.Input(shape=input_size, name='state')
-        next_state =  keras.layers.Input(shape=input_size, name='next_state')
-        median_dist = keras.layers.Input(shape=(1,), name='med_dist')
-        policy_ratio = keras.layers.Input(shape=(1,), name='policy_ratio')
+        S = np.squeeze(data.states())
+        SN = np.squeeze(data.next_states())
+        PI0 = data.base_propensity()
+        PI1 = data.target_propensity()
+        REW = data.rewards()
+        ACTS = data.actions()
 
-        if modeltype == 'conv':
-            def init(): return keras.initializers.RandomNormal(mean=0.0, stddev=.003, seed=np.random.randint(2**32))
-            conv1 = Conv2D(8, (7,7), strides=(3,3), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init())
-            pool1 = MaxPool2D(data_format='channels_first')
-            conv2 = Conv2D(16, (3,3), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init())
-            pool2 = MaxPool2D(data_format='channels_first')
-            flat1 = Flatten(name='flattened')
-            out = Dense(1, activation='linear',kernel_initializer=init(), bias_initializer=init())
-            output = Lambda(lambda x: tf.exp(tf.clip_by_value(x,-10,10)))
+        total_reward = 0.0
+        self_normalizer = 0.0
+        for episode in range(len(S)):
+            discounted_t = 1.0
+            for (s,a,sn,r,pi1,pi0) in zip(S[episode],ACTS[episode],SN[episode], REW[episode], PI1[episode], PI0[episode]):
+                policy_ratio = (pi1/pi0)[a]
+                total_reward += self.w[s] * policy_ratio * r * discounted_t
+                self_normalizer += self.w[s] * policy_ratio * discounted_t
+                discounted_t *= cfg.gamma
 
-            w = output(out(flat1(pool2(conv2(pool1(conv1(state)))))))
-            w_next = output(out(flat1(pool2(conv2(pool1(conv1(next_state)))))))
+        return total_reward / self_normalizer
 
-            trainable_model = keras.models.Model(inputs=[state,next_state,policy_ratio,isStart,median_dist], outputs=[w])
-            w_model = keras.models.Model(inputs=[state], outputs=w)
-        elif modeltype == 'conv1':
-            def init(): return keras.initializers.RandomNormal(mean=0.0, stddev=.003, seed=np.random.randint(2**32))
-            conv1 = Conv2D(8, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init())
-            pool1 = MaxPool2D(data_format='channels_first')
-            conv2 = Conv2D(16, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init())
-            pool2 = MaxPool2D(data_format='channels_first')
-            flat1 = Flatten(name='flattened')
-            out = Dense(1, activation='linear',kernel_initializer=init(), bias_initializer=init())
-            output = Lambda(lambda x: tf.exp(tf.clip_by_value(x,-10,10)))
-
-            w = output(out(flat1(pool2(conv2(pool1(conv1(state)))))))
-            w_next = output(out(flat1(pool2(conv2(pool1(conv1(next_state)))))))
-
-
-            trainable_model = keras.models.Model(inputs=[state,next_state,policy_ratio,isStart,median_dist], outputs=[w])
-            w_model = keras.models.Model(inputs=[state], outputs=w)
-        elif modeltype == 'linear':
-            def init(): return keras.initializers.RandomNormal(mean=0.0, stddev=.003, seed=np.random.randint(2**32))
-            dense1 = Dense(1, activation='linear', name='out',kernel_initializer=init(), bias_initializer=keras.initializers.Zeros())
-            output = Lambda(lambda x: tf.exp(tf.clip_by_value(x,-10,10)))
-
-            w = output(dense1(state))
-            w_next = output(dense1(next_state))
-
-            trainable_model = keras.models.Model(inputs=[state,next_state,policy_ratio,isStart,median_dist], outputs=[w])
-            w_model = keras.models.Model(inputs=[state], outputs=w)
-        else:
-            def init(): return keras.initializers.RandomNormal(mean=0.0, stddev=.003, seed=np.random.randint(2**32))
-            dense1 = Dense(16, activation='relu',kernel_initializer=init(), bias_initializer=keras.initializers.Zeros())
-            dense2 = Dense(8, activation='relu',kernel_initializer=init(), bias_initializer=keras.initializers.Zeros())
-            dense3 = Dense(1, activation='linear', name='out',kernel_initializer=init(), bias_initializer=keras.initializers.Zeros())
-            output = Lambda(lambda x: tf.exp(tf.clip_by_value(x,-10,10)))
-
-            w = output(dense3(dense2(dense1(state))))
-            w_next = output(dense3(dense2(dense1(next_state))))
-
-
-            trainable_model = keras.models.Model(inputs=[state,next_state,policy_ratio,isStart,median_dist], outputs=[w])
-            w_model = keras.models.Model(inputs=[state], outputs=w)
-
-        # rmsprop = keras.optimizers.RMSprop(lr=0.001, rho=0.95, epsilon=1e-08, decay=1e-3)#, clipnorm=1.)
-        adam = keras.optimizers.Adam()
-
-        trainable_model.add_loss(self.IH_loss(next_state,w,w_next,policy_ratio,isStart, median_dist, self.modeltype))
-        trainable_model.compile(loss=None, optimizer=adam, metrics=['accuracy'])
-        return trainable_model, w_model
-
-    @staticmethod
-    def IH_loss(next_state, w, w_next,policy_ratio,isStart, med_dist, modeltype):
-        # change from tf to K.backend?
-        norm_w = tf.reduce_mean(w)
-
-        # calculate loss function
-        x = (1-isStart) * w * policy_ratio + isStart * norm_w - w_next
-        x = tf.reshape(x,[-1,1])
-
-        diff_xx = tf.expand_dims(next_state, 0) - tf.expand_dims(next_state, 1)
-        if modeltype in ['conv', 'conv1']:
-            K_xx = tf.exp(-tf.reduce_sum(tf.square(diff_xx),axis=[-1, -2, -3])/(2.0*med_dist*med_dist))#*med_dist))
-        else:
-            K_xx = tf.exp(-tf.reduce_sum(tf.square(diff_xx),axis=[-1])/(2.0*med_dist*med_dist))#*med_dist))
-
-        loss_xx = tf.matmul(tf.matmul(tf.transpose(x),K_xx),x)#/(n_x*n_x)
-
-        loss = tf.squeeze(loss_xx)/(norm_w*norm_w)
-        return tf.reduce_mean(loss)
-
-
-    def run_NN(self, env, max_epochs, batch_size, epsilon=0.001, modeltype_overwrite =None):
-        """(Neural) Get the IH OPE W model for pi_e.
+    def fit_NN(self, data, pi_e, config, verbose=True) -> float:
+        """(Neural) Get the IH OPE estimate for pi_e.
 
         Parameters
         ----------
         env : obj
             The environment object.
+        pi_b : obj
+            A policy object, behavior policy.
+        pi_e: obj
+            A policy object, evaluation policy.
         max_epochs : int
             Maximum number of NN epochs to run
-        batch_size : int
-            Minibatch size to during training
+        batch_size: int
+            Batch size for the quad program
         epsilon : float, optional
             Default: 0.001
-        modeltype_overwrite : str, optional
-            Overwrite default model
-            Default: None
-
+        
         Returns
         -------
-        obj
-            obj: Weights W(s) -> R^|A| 
+        float, obj1, obj2
+            float: represents the average value of the final 10 iterations
+            obj1: Fitted Forward model Q(s,a) -> R
+            obj2: Fitted Forward model Q(s) -> R^|A| 
         """
-        self.dim_of_actions = env.n_actions
-        self.Q_k = None
 
-        # earlyStopping = EarlyStopping(monitor='val_loss', min_delta=1e-4,  patience=10, verbose=1, mode='min', restore_best_weights=True)
-        # reduce_lr_loss = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=7, verbose=1, min_delta=1e-4, mode='min')
-
-        self.more_callbacks = [] #[earlyStopping, reduce_lr_loss]
-
-        im = self.data.states()[0]
-        if self.processor: im = self.processor(im)
-        if self.modeltype in ['conv', 'conv1']:
-            trainable_model, state_to_w = self.build_model(im.shape[1:], 'w', modeltype=modeltype_overwrite if modeltype_overwrite is not None else self.modeltype)
-            state_to_w.predict([im])
-            self.state_to_w = state_to_w
-            self.trainable_model = trainable_model
-        else:
-            trainable_model, state_to_w = self.build_model((np.prod(im.shape[1:]),), 'w', modeltype=self.modeltype)
-            state_to_w.predict([[im[0].reshape(-1)]])
-            self.state_to_w = state_to_w
-            self.trainable_model = trainable_model
-        values = []
+        cfg = config.models['IH']
+        processor = config.processor
+        
+        # TODO: early stopping + lr reduction
+        
+        im = data.states()[0]
+        if processor: im = processor(im)
+        self.W = cfg['model'](im.shape[1:], 1) # w(s) -> R
+        optimizer = optim.Adam(self.W.parameters())
 
         print('Training: IH')
         losses = []
-        for k in tqdm(range(1)):
-
-            dataset_length = self.data.num_tuples()
-            perm = np.random.permutation(range(dataset_length))
-            eighty_percent_of_set = int(1.*len(perm))
-            training_idxs = perm[:eighty_percent_of_set]
-            validation_idxs = perm[eighty_percent_of_set:]
-            training_steps_per_epoch = 1 #int(1. * np.ceil(len(training_idxs)/float(batch_size)))
-            validation_steps_per_epoch = int(np.ceil(len(validation_idxs)/float(batch_size)))
-            train_gen = self.generator(env, training_idxs, fixed_permutation=True, batch_size=batch_size)
-            # val_gen = self.generator(env, validation_idxs, fixed_permutation=True, batch_size=batch_size)
+        
+        batch_size = cfg['batch_size']    
+        dataset_length = data.num_tuples()
+        perm = np.random.permutation(range(dataset_length))
+        eighty_percent_of_set = int(1.*len(perm))
+        training_idxs = perm[:eighty_percent_of_set]
+        validation_idxs = perm[eighty_percent_of_set:]
+        training_steps_per_epoch = int(1. * np.ceil(len(training_idxs)/float(batch_size)))
+        validation_steps_per_epoch = int(np.ceil(len(validation_idxs)/float(batch_size)))
+        # steps_per_epoch = 1 #int(np.ceil(len(dataset)/float(batch_size)))
+        for k in tqdm(range(cfg['max_epochs'])):
+            train_gen = self.generator(data, config, training_idxs, fixed_permutation=True, batch_size=batch_size, processor=processor)
+            val_gen = self.generator(data, config, training_idxs, fixed_permutation=True, batch_size=batch_size, processor=processor)
 
             M = 5
-            hist = self.trainable_model.fit_generator(train_gen,
-                               steps_per_epoch=training_steps_per_epoch,
-                               # validation_data=val_gen,
-                               # validation_steps=validation_steps_per_epoch,
-                               # epochs=max_epochs,
-                               # max_queue_size=50,
-                               # workers=1,
-                               # use_multiprocessing=False,
-                               # verbose=1,
-                               callbacks = self.more_callbacks)
-        return state_to_w
+        
+            for step in range(training_steps_per_epoch):
+                
+                with torch.no_grad():
+                    inp, _ = next(train_gen)
+                    state = torch.from_numpy(inp[0]).float()
+                    next_state = torch.from_numpy(inp[1]).float()
+                    policy_ratio = torch.from_numpy(inp[2]).float().view(-1, 1)
+                    is_start = torch.from_numpy(inp[3]).float().view(-1, 1)
+                    med_dist = torch.from_numpy(inp[4]).float()
+                    
+                    w_next = self.W.predict(next_state)
+                    w_next = torch.exp(torch.clamp(w_next, -10, 10))
 
-        # return np.mean(values[-10:]), self.Q_k, self.Q_k_all
 
-    def euclidean(self, X, Y):
-        distance = np.zeros((len(X), len(Y)))
-        for row,x in enumerate(X):
-            for col,y in enumerate(Y):
-                y_row,y_col = np.unravel_index(np.argmin(y.reshape(-1), y.shape))
-                x_row,x_col = np.unravel_index(np.argmin(y.reshape(-1), y.shape))
-                distance = np.sqrt((x_row-y_row)**2 + (x_col+y_col)**2)
-        return distance
+                w = self.W.predict(state)
+                w = torch.exp(torch.clamp(w, -10, 10))
+
+                
+                # import pdb; pdb.set_trace()
+                norm_w = w.mean()
+                x = (1-is_start) * w * policy_ratio + is_start * norm_w - w_next
+                x = x.view((-1, 1))
+                diff_xx = torch.unsqueeze(next_state, 0) - torch.unsqueeze(next_state, 1)
+                K_xx = torch.exp(-diff_xx.pow(2).sum(list(range(len(diff_xx.shape)))[2:]))/(2.0*med_dist*med_dist)
+                loss_xx = torch.matmul(torch.matmul(torch.transpose(x, 0, 1), K_xx), x)
+                loss = torch.squeeze(loss_xx) / (norm_w * norm_w)
+                # loss = loss.mean()
+
+                optimizer.zero_grad()
+                loss.backward()
+
+                torch.nn.utils.clip_grad_norm_(self.W.parameters(), cfg['clipnorm'])
+                optimizer.step()
+
+        self.fitted = 'NN'
+        return 1.0
 
     @threadsafe_generator
-    def generator(self, env, all_idxs, fixed_permutation=False,  batch_size = 64):
+    def generator(self, data, cfg, all_idxs, fixed_permutation=False,  batch_size = 64, processor=None):
         """Data Generator for fitting FQE model
 
         Parameters
@@ -294,18 +190,18 @@ class InfiniteHorizonOPE(object):
         data_length = len(all_idxs)
         steps = int(np.ceil(data_length/float(batch_size)))
 
-        n = len(self.data)
-        T = max(self.data.lengths())
-        n_dim = self.data.n_dim
-        n_actions = self.data.n_actions
+        n = len(data)
+        T = max(data.lengths())
+        n_dim = data.n_dim
+        n_actions = data.n_actions
 
 
-        S = np.hstack([self.data.states()[:,[0]], self.data.states()])
-        SN = np.hstack([self.data.states()[:,[0]], self.data.next_states()])
-        PI0 = np.hstack([self.data.base_propensity()[:,[0]], self.data.base_propensity()])
-        PI1 = np.hstack([self.data.target_propensity()[:,[0]], self.data.target_propensity()])
+        S = np.hstack([data.states()[:,[0]], data.states()])
+        SN = np.hstack([data.states()[:,[0]], data.next_states()])
+        PI0 = np.hstack([data.base_propensity()[:,[0]], data.base_propensity()])
+        PI1 = np.hstack([data.target_propensity()[:,[0]], data.target_propensity()])
 
-        ACTS = np.hstack([np.zeros_like(self.data.actions()[:,[0]]), self.data.actions()])
+        ACTS = np.hstack([np.zeros_like(data.actions()[:,[0]]), data.actions()])
         pi0 = []
         pi1 = []
         for i in range(len(ACTS)):
@@ -322,11 +218,11 @@ class InfiniteHorizonOPE(object):
         PI1 = np.array(pi1)
 
 
-        REW = np.hstack([np.zeros_like(self.data.rewards()[:,[0]]), self.data.rewards()])
+        REW = np.hstack([np.zeros_like(data.rewards()[:,[0]]), data.rewards()])
         ISSTART = np.zeros_like(REW)
         ISSTART[:,0] = 1.
 
-        PROBS = np.repeat(np.atleast_2d(self.gamma**np.arange(-1,REW.shape[1]-1)), REW.shape[0], axis=0).reshape(REW.shape)
+        PROBS = np.repeat(np.atleast_2d(cfg.gamma**np.arange(-1,REW.shape[1]-1)), REW.shape[0], axis=0).reshape(REW.shape)
 
         S = np.vstack(S)
         SN = np.vstack(SN)
@@ -346,10 +242,11 @@ class InfiniteHorizonOPE(object):
             low_ = batch_num * bs
             high_ = (batch_num + 1) * bs
             sub = subsamples[low_:high_]
-            if self.modeltype in ['conv']:
-                s = self.processor(S[sub])
-            else:
-                s = S[sub].reshape(len(sub),-1)[...,None,None]
+            # if self.modeltype in ['conv']:
+            #     s = cfg.processor(S[sub])
+            # else:
+            #     s = S[sub].reshape(len(sub),-1)[...,None,None]
+            s = cfg.processor(S[sub])
 
             med_dist.append(np.sum(np.square(s[None, :, :] - s[:, None, :]), axis = tuple([-3,-2,-1])))
 
@@ -361,12 +258,14 @@ class InfiniteHorizonOPE(object):
                 # batch_idxs = perm[(batch*batch_size):((batch+1)*batch_size)]
                 batch_idxs = np.random.choice(S.shape[0], batch_size, p=PROBS)
 
-                if self.modeltype in ['conv', 'conv1']:
-                    state = self.processor(S[batch_idxs])
-                    next_state = self.processor(SN[batch_idxs])
-                else:
-                    state = S[batch_idxs].reshape(len(batch_idxs),-1)#[...,None,None]
-                    next_state = SN[batch_idxs].reshape(len(batch_idxs),-1)#[...,None,None]
+                # if self.modeltype in ['conv', 'conv1']:
+                #     state = self.processor(S[batch_idxs])
+                #     next_state = self.processor(SN[batch_idxs])
+                # else:
+                #     state = S[batch_idxs].reshape(len(batch_idxs),-1)#[...,None,None]
+                #     next_state = SN[batch_idxs].reshape(len(batch_idxs),-1)#[...,None,None]
+                state = cfg.processor(S[batch_idxs])
+                next_state = cfg.processor(SN[batch_idxs])
 
                 policy_ratio = PI1[batch_idxs] / PI0[batch_idxs]
                 isStart = ISSTART[batch_idxs]
@@ -374,156 +273,61 @@ class InfiniteHorizonOPE(object):
 
                 yield ([state,next_state,policy_ratio,isStart,median_dist], [])
 
+    def evaluate_NN(self, data, cfg):
+        
+        S = data.states() #np.hstack([self.data.states()[:,[0]], self.data.states()])
+        PI0 = data.base_propensity() #np.hstack([self.data.base_propensity()[:,[0]], self.data.base_propensity()])
+        PI1 = data.target_propensity() #np.hstack([self.data.target_propensity()[:,[0]], self.data.target_propensity()])
 
-    def evaluate(self, env, max_epochs, matrix_size):
-        """(Linear/Neural) Return the IH OPE estimate for pi_e with respect to the data
+        ACTS = data.actions() #np.hstack([np.zeros_like(self.data.actions()[:,[0]]), self.data.actions()])
+        pi0 = []
+        pi1 = []
+        for i in range(len(ACTS)):
+            pi0_ = []
+            pi1_ = []
+            for j in range(len(ACTS[1])):
+                a = ACTS[i,j]
+                pi0_.append(PI0[i,j,a])
+                pi1_.append(PI1[i,j,a])
+            pi0.append(pi0_)
+            pi1.append(pi1_)
 
-        Parameters
-        ----------
-        env : obj
-            The environment object.
-        max_epochs : int
-            Maximum number of NN epochs to run
-        matrix_size: int
-            Minibatch size
+        PI0 = np.array(pi0)
+        PI1 = np.array(pi1)
 
-        Returns
-        -------
-        float
-            IH OPE estimate
-        """
+        REW = data.rewards() #np.hstack([np.zeros_like(self.data.rewards()[:,[0]]), self.data.rewards()])
 
-        dataset = self.data
-        if self.is_discrete:
+        PROBS = np.repeat(np.atleast_2d(cfg.gamma**np.arange(REW.shape[1])), REW.shape[0], axis=0).reshape(REW.shape)
 
-            S = np.squeeze(dataset.states())
-            SN = np.squeeze(dataset.next_states())
-            PI0 = dataset.base_propensity()
-            PI1 = dataset.target_propensity()
-            REW = dataset.rewards()
-            ACTS = dataset.actions()
+        S = np.vstack(S)
+        PI1 = PI1.reshape(-1)
+        PI0 = PI0.reshape(-1)
+        PROBS = PROBS.reshape(-1)
+        REW = REW.reshape(-1)
 
-            for episode in range(len(S)):
-                discounted_t = 1.0
-                initial_state = S[episode][0]
-                for (s,a,sn,r,pi1,pi0) in zip(S[episode],ACTS[episode],SN[episode], REW[episode], PI1[episode], PI0[episode]):
-                    discounted_t *= self.gamma
-                    policy_ratio = (pi1/pi0)[a]
-                    self.den_discrete.feed_data(s, sn, initial_state, policy_ratio, discounted_t)
-                self.den_discrete.feed_data(-1, initial_state, initial_state, 1, 1-discounted_t)
+        predict_batch_size = 128
+        steps = int(np.ceil(S.shape[0]/float(predict_batch_size)))
+        densities = []
+        for batch in np.arange(steps):
+            batch_idxs = np.arange(S.shape[0])[(batch*predict_batch_size):((batch+1)*predict_batch_size)]
 
+            s = cfg.processor(S[batch_idxs])
+            densities.append(self.W.predict(torch.from_numpy(s).float()).detach().numpy())
+            # if self.modeltype in ['conv', 'conv1']:
+            #     s = cfg.processor(S[batch_idxs])
+            #     densities.append(self.state_to_w.predict(s))
+            # else:
+            #     s = S[batch_idxs]
+            #     s = s.reshape(s.shape[0], -1)
+            #     densities.append(self.state_to_w.predict(s))
 
-            x, w = self.den_discrete.density_ratio_estimate()
-            total_reward = 0.0
-            self_normalizer = 0.0
-            for episode in range(len(S)):
-                discounted_t = 1.0
-                for (s,a,sn,r,pi1,pi0) in zip(S[episode],ACTS[episode],SN[episode], REW[episode], PI1[episode], PI0[episode]):
-                    policy_ratio = (pi1/pi0)[a]
-                    total_reward += w[s] * policy_ratio * r * discounted_t
-                    self_normalizer += w[s] * policy_ratio * discounted_t
-                    discounted_t *= self.gamma
-
-            return total_reward / self_normalizer
-
-        else:
-
-            batch_size = matrix_size
-            # Here Linear = linear NN
-            self.state_to_w = self.run_NN(env, max_epochs, batch_size, epsilon=0.001)
-
-
-            S = self.data.states() #np.hstack([self.data.states()[:,[0]], self.data.states()])
-            PI0 = self.data.base_propensity() #np.hstack([self.data.base_propensity()[:,[0]], self.data.base_propensity()])
-            PI1 = self.data.target_propensity() #np.hstack([self.data.target_propensity()[:,[0]], self.data.target_propensity()])
-
-            ACTS = self.data.actions() #np.hstack([np.zeros_like(self.data.actions()[:,[0]]), self.data.actions()])
-            pi0 = []
-            pi1 = []
-            for i in range(len(ACTS)):
-                pi0_ = []
-                pi1_ = []
-                for j in range(len(ACTS[1])):
-                    a = ACTS[i,j]
-                    pi0_.append(PI0[i,j,a])
-                    pi1_.append(PI1[i,j,a])
-                pi0.append(pi0_)
-                pi1.append(pi1_)
-
-            PI0 = np.array(pi0)
-            PI1 = np.array(pi1)
-
-            REW = self.data.rewards() #np.hstack([np.zeros_like(self.data.rewards()[:,[0]]), self.data.rewards()])
-
-            PROBS = np.repeat(np.atleast_2d(self.gamma**np.arange(REW.shape[1])), REW.shape[0], axis=0).reshape(REW.shape)
-
-            S = np.vstack(S)
-            PI1 = PI1.reshape(-1)
-            PI0 = PI0.reshape(-1)
-            PROBS = PROBS.reshape(-1)
-            REW = REW.reshape(-1)
-
-            predict_batch_size = max(128, batch_size)
-            steps = int(np.ceil(S.shape[0]/float(predict_batch_size)))
-            densities = []
-            for batch in np.arange(steps):
-                batch_idxs = np.arange(S.shape[0])[(batch*predict_batch_size):((batch+1)*predict_batch_size)]
-
-                if self.modeltype in ['conv', 'conv1']:
-                    s = self.processor(S[batch_idxs])
-                    densities.append(self.state_to_w.predict(s))
-                else:
-                    s = S[batch_idxs]
-                    s = s.reshape(s.shape[0], -1)
-                    densities.append(self.state_to_w.predict(s))
-
-            densities = np.vstack(densities).reshape(-1)
-            return self.off_policy_estimator_density_ratio(REW, PROBS, PI1/PI0, densities)
+        densities = np.vstack(densities).reshape(-1)
+        estimate = self.off_policy_estimator_density_ratio(REW, PROBS, PI1/PI0, densities)
+        return estimate/np.sum(cfg.gamma ** np.arange(max(data.lengths())))
 
     @staticmethod
     def off_policy_estimator_density_ratio(rew, prob, ratio, den_r):
         return np.sum(prob * den_r * ratio * rew)/np.sum(prob * den_r * ratio)
-
-    def get_model_params(self):
-        # get trainable params.
-        model_names = []
-        model_params = []
-        model_shapes = []
-        with self.g.as_default():
-            t_vars = tf.trainable_variables()
-            for var in t_vars:
-                if var.name.startswith('infhorizon'):
-                    param_name = var.name
-                    p = self.sess.run(var)
-                    model_names.append(param_name)
-                    params = np.round(p*10000).astype(np.int).tolist()
-                    model_params.append(params)
-                    model_shapes.append(p.shape)
-        return model_params, model_shapes, model_names
-    def set_model_params(self, params):
-        with self.g.as_default():
-            t_vars = tf.trainable_variables()
-            idx = 0
-            for var in t_vars:
-                if var.name.startswith('infhorizon'):
-                    pshape = tuple(var.get_shape().as_list())
-                    p = np.array(params[idx])
-                    assert pshape == p.shape, "inconsistent shape"
-                    assign_op, pl = self.assign_ops[var]
-                    self.sess.run(assign_op, feed_dict={pl.name: p/10000.})
-                    idx += 1
-    def load_json(self, jsonfile='infhorizon.json'):
-        with open(jsonfile, 'r') as f:
-            params = json.load(f)
-        self.set_model_params(params)
-    def save_json(self, jsonfile='infhorizon.json'):
-        model_params, model_shapes, model_names = self.get_model_params()
-        qparams = []
-        for p in model_params:
-            qparams.append(p)
-        with open(jsonfile, 'wt') as outfile:
-            json.dump(qparams, outfile, sort_keys=True, indent=0, separators=(',', ': '))
-
 
 def linear_solver(n, M):
     M -= np.amin(M) # Let zero sum game at least with nonnegative payoff

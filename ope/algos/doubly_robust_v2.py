@@ -2,8 +2,8 @@ import sys
 import numpy as np
 import pandas as pd
 from functools import reduce
-from ope.models.basics import BasicPolicy, SingleTrajectory
-from ope.models.epsilon_greedy_policy import EGreedyPolicy
+from ope.policies.basics import BasicPolicy, SingleTrajectory
+from ope.policies.epsilon_greedy_policy import EGreedyPolicy
 from tqdm import tqdm
 import itertools
 
