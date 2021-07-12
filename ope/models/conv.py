@@ -30,6 +30,9 @@ class defaultCNN(nn.Module):
     
     def predict(self, state):
         return self.net(state)
+    
+    def predict_w_softmax(self, state):
+        return nn.Softmax()(self.net(state))
 
 class defaultModelBasedCNN(nn.Module):
     def __init__(self, shape, action_space_dim):

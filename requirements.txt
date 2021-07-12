@@ -3,11 +3,10 @@ numpy
 scikit-image
 scikit-learn
 Cython
-tensorflow==1.15
 PyVirtualDisplay
 scipy
 matplotlib
-Keras==2.2.4
+torch
 boto3
 scikit_image
 pandas

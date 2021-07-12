@@ -33,11 +33,8 @@ from ope.algos.approximate_model import ApproxModel
 
 from ope.policies.basics import BasicPolicy
 from ope.policies.epsilon_greedy_policy import EGreedyPolicy
-from ope.policies.max_likelihood import MaxLikelihoodModel
-from ope.policies.Q_wrapper import QWrapper
 from ope.policies.tabular_model import TabularPolicy
 
-from ope.utls.get_Qs import getQs
 from ope.utls.rollout import rollout
 
 def analysis(dic):
@@ -141,8 +138,8 @@ class ExperimentRunner(object):
             for i,frames in enumerate(traj):
                 behavior_data.trajectories[i]['frames'] = frames
 
-        if cfg.to_regress_pi_b:
-            behavior_data.estimate_propensity()
+        if cfg.to_regress_pi_b['to_regress']:
+            behavior_data.estimate_propensity(cfg)
 
         true = eval_data.value_of_data(gamma, False)
         dic.update({'ON POLICY': [float(true), 0]})
@@ -194,29 +191,14 @@ class ExperimentRunner(object):
             elif 'MBased' == model:
                 mbased = ApproxModel(cfg, behavior_data.n_actions)
                 mbased.fit(behavior_data, pi_e, cfg, cfg.models[model]['model'])
-                mbased.get_Qs_for_data(pi_e, behavior_data, cfg)
+                mbased_Qs = mbased.get_Qs_for_data(pi_e, behavior_data, cfg)
+                out = self.estimate(mbased_Qs, behavior_data, gamma, model, true)
+                dic.update(out)
             elif 'IS' == model:
                 out = self.estimate([], behavior_data, gamma, 'IS', true, True)
                 dic.update(out)
             else:
                 print(model, ' is not a valid method')
-            
-        # for model in models:
-        #     if (model == 'MBased_Approx') or (model == 'MBased_MLE'):
-        #         if model == 'MBased_MLE':
-        #             print('*'*20)
-        #             print('MLE estimator not implemented for continuous state space. Using MBased_Approx instead')
-        #             print('*'*20)
-        #         MBased_max_trajectory_length = 25
-        #         batchsize = 32
-        #         mbased_num_epochs = 100
-        #         MDPModel = ApproxModel(gamma, None, MBased_max_trajectory_length, frameskip, frameheight, processor, action_space_dim=env.n_actions)
-        #         mdpmodel = MDPModel.run(env, behavior_data, mbased_num_epochs, batchsize, Qmodel)
-
-        #         Qs_model_based = get_Qs.get(mdpmodel)
-        #         out = self.estimate(Qs_model_based, behavior_data, gamma,'MBased_Approx', true)
-        #         dic.update(out)
-
 
         result = analysis(dic)
         self.results.append(Result(cfg, result))
@@ -257,5 +239,4 @@ class ExperimentRunner(object):
             dic['MAGIC {0}'.format(name)] = [magic_evaluation[0], (magic_evaluation[0] - true )**2]
             dic['SDR {0}'.format(name)] = [SDR_evaluation[0], (SDR_evaluation[0] - true )**2]
 
-        # return dr_evaluation, wdr_evaluation, magic_evaluation, AM_evaluation, SDR_evaluation
         return dic

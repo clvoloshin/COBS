@@ -9,15 +9,11 @@ from ope.policies.tabular_model import TabularPolicy
 
 from ope.experiment_tools.experiment import ExperimentRunner, analysis
 from ope.experiment_tools.config import Config
-from ope.experiment_tools.factory import get_model_from_name
+from ope.experiment_tools.factory import setup_params
 
 def main(param):
 
-    # replace string of model with model itself in the configuration.
-    for method, parameters in param['models'].items():
-        if parameters['model'] != 'tabular':
-            param['models'][method]['model'] = get_model_from_name(parameters['model'])
-
+    param = setup_params(param)
     runner = ExperimentRunner()
 
     for N in range(5): 

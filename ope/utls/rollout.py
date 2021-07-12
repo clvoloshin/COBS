@@ -5,15 +5,16 @@ import os
 import json
 import pandas as pd
 from collections import Counter
-from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
-import keras
-from keras.models     import Sequential
-from keras.layers     import Dense, Conv2D, Flatten, MaxPool2D, concatenate, UpSampling2D, Reshape, Lambda
-from keras.optimizers import Adam
-from keras import backend as K
-import tensorflow as tf
 from ope.utls.thread_safe import threadsafe_generator
-from keras import regularizers
+
+
+import torch
+torch.backends.cudnn.benchmark = True
+import torch.nn as nn
+import torch.optim as optim
+import torch.autograd as autograd
+import torch.nn.functional as F
+torch.autograd.set_detect_anomaly(True)
 
 class DataHolder(object):
     def __init__(self, s, a, r, s_, d, policy_action, original_shape):
@@ -238,10 +239,10 @@ class Data(object):
     def omega(self):
         return np.array([[episode['target_propensity'][idx][int(act)]/episode['base_propensity'][idx][int(act)] for idx,act in enumerate(episode['a'])] for episode in self.trajectories])
 
-    def estimate_propensity(self, use_NN=False):
+    def estimate_propensity(self, cfg):
         # WARN: Only works in tabular env with discrete action space. Current implementation is a max likelihood
 
-        if not use_NN:
+        if cfg.to_regress_pi_b['model'] == 'tabular':
             data = self.basic_transitions()
             propensity = np.ones((self.n_dim, self.n_actions))/self.n_actions
 
@@ -265,25 +266,12 @@ class Data(object):
                 self.trajectories[episode_num]['base_propensity'] = base_propensity
         else:
 
-            def init(): return keras.initializers.TruncatedNormal(mean=0.0, stddev=0.1, seed=np.random.randint(2**32))
-            scope = 'pi_b'
-            inp = keras.layers.Input(self.states()[0][0].shape, name='frames')
-            actions = keras.layers.Input((self.n_actions,), name='mask')
-            def init(): return keras.initializers.TruncatedNormal(mean=0.0, stddev=0.001, seed=np.random.randint(2**32))
-            conv1 = Conv2D(16, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(inp)
-            # pool1 = MaxPool2D(data_format='channels_first')(conv1)
-            # conv2 = Conv2D(16, (2,2), strides=(1,1), padding='same', data_format='channels_first', activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(pool1)
-            # pool2 = MaxPool2D(data_format='channels_first')(conv2)
-            flat1 = Flatten(name='flattened')(conv1)
-            out = Dense(8, activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(flat1)
-            out = Dense(8, activation='elu',kernel_initializer=init(), bias_initializer=init(), kernel_regularizer=regularizers.l2(1e-6))(out)
-            all_actions = Dense(self.n_actions, name=scope, activation="softmax",kernel_initializer=init(), bias_initializer=init())(out)
-            model = keras.models.Model(inputs=inp, outputs=all_actions)
-            model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+            model = cfg.to_regress_pi_b['model'](self.states()[0][0].shape, self.n_actions)
+            optimizer = optim.Adam(model.parameters())
 
             self.processed_data = self.fill()
 
-            batch_size = 32
+            batch_size = cfg.to_regress_pi_b['batch_size']
             dataset_length = self.num_tuples()
             perm = np.random.permutation(range(dataset_length))
             eighty_percent_of_set = int(.8*len(perm))
@@ -292,29 +280,34 @@ class Data(object):
             training_steps_per_epoch = int(np.ceil(len(training_idxs)/float(batch_size)))
             validation_steps_per_epoch = int(np.ceil(len(validation_idxs)/float(batch_size)))
 
-            train_gen = self.generator(training_idxs, fixed_permutation=True, batch_size=batch_size)
-            val_gen = self.generator(validation_idxs, fixed_permutation=True, batch_size=batch_size)
+            for k in tqdm(range(cfg.to_regress_pi_b['max_epochs'])):
+                
+                train_gen = self.generator(training_idxs, fixed_permutation=True, batch_size=batch_size)
+                val_gen = self.generator(validation_idxs, fixed_permutation=True, batch_size=batch_size)
 
-            earlyStopping = EarlyStopping(monitor='val_loss', min_delta=1e-4,  patience=10, verbose=1, mode='min', restore_best_weights=True)
-            reduce_lr_loss = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=7, verbose=1, min_delta=1e-4, mode='min')
+                # TODO: earlyStopping, LR reduction
 
-            more_callbacks = [earlyStopping, reduce_lr_loss]
+                for step in range(training_steps_per_epoch):
+                    
+                    with torch.no_grad():
+                        (inp, out) = next(train_gen)
+                        states = torch.from_numpy(inp).float()
+                        actions = torch.from_numpy(out).float().argmax(1)
 
-            hist = model.fit_generator(train_gen,
-                               steps_per_epoch=training_steps_per_epoch,
-                               validation_data=val_gen,
-                               validation_steps=validation_steps_per_epoch,
-                               epochs=30,
-                               max_queue_size=50,
-                               workers=2,
-                               use_multiprocessing=False,
-                               verbose=1,
-                               callbacks = more_callbacks)
+                    prediction = model.predict_w_softmax(states)
+                    
+                    loss = nn.NLLLoss()(torch.log(prediction), actions)
+                                        
+                    optimizer.zero_grad()
+                    loss.backward()
+
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.to_regress_pi_b['clipnorm'])
+                    optimizer.step()
 
             for episode_num, states in enumerate(np.squeeze(self.states())):
                 base_propensity = []
                 for state in states:
-                    base_propensity.append(model.predict(state[None,None,...])[0].tolist())
+                    base_propensity.append(model.predict_w_softmax(torch.from_numpy(state[None,None,...]).float()).detach().numpy()[0].tolist())
 
                 self.trajectories[episode_num]['base_propensity'] = base_propensity
 

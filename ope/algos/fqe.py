@@ -168,15 +168,16 @@ class FittedQEvaluation(DirectMethodQ):
         print('Training: FQE')
         processed_data = self.fill(data)
         losses = []
+        
+        batch_size = cfg['batch_size']
+        dataset_length = data.num_tuples()
+        perm = np.random.permutation(range(dataset_length))
+        eighty_percent_of_set = int(1.*len(perm))
+        training_idxs = perm[:eighty_percent_of_set]
+        validation_idxs = perm[eighty_percent_of_set:]
+        training_steps_per_epoch = int(1. * np.ceil(len(training_idxs)/float(batch_size)))
+        
         for k in tqdm(range(cfg['max_epochs'])):
-            batch_size = cfg['batch_size']
-
-            dataset_length = data.num_tuples()
-            perm = np.random.permutation(range(dataset_length))
-            eighty_percent_of_set = int(1.*len(perm))
-            training_idxs = perm[:eighty_percent_of_set]
-            validation_idxs = perm[eighty_percent_of_set:]
-            training_steps_per_epoch = int(1. * np.ceil(len(training_idxs)/float(batch_size)))
             train_gen = self.generator(processed_data, config, training_idxs, fixed_permutation=True, batch_size=batch_size, processor=processor)
             
             M = 5
