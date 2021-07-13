@@ -66,6 +66,7 @@ and the models section (TODO: rename to methods section) looks like:
  "models": {
         "FQE": {
             "model": "defaultCNN",        # What model to fit FQE with
+                                          #  Note: To add your own, see later in the README.md
             "convergence_epsilon": 1e-4,  # When to stop iterations
             "max_epochs": 100,            # Max number of fitting iterations
             "batch_size": 32,             # Minibatch size
