@@ -125,7 +125,7 @@ elif 'NewMethod' == model:
     new_method = NewMethod() ## Instatiates the method
     new_method.fit(behavior_data, pi_e, cfg, cfg.models[model]['model']) ## Fits the method
     new_method_output = new_method.evaluate(behavior_data, cfg) ## Evaluate the method
-    dic.update({'IH': [new_method_output, (new_method_output - true )**2]}) ## Update results
+    dic.update({'NewMethod': [new_method_output, (new_method_output - true )**2]}) ## Update results
 ...
 ```
 
