@@ -174,14 +174,14 @@ There are currently two available policy types.
 If you use COBS, please use the following BibTeX entry.
 
 ```
-  @misc{voloshin2019empirical,
+  @inproceedings{
+    voloshin2021empirical,
     title={Empirical Study of Off-Policy Policy Evaluation for Reinforcement Learning},
-    author={Cameron Voloshin and Hoang M. Le and Nan Jiang and Yisong Yue},
-    year={2019},
-    eprint={1911.06854},
-    archivePrefix={arXiv},
-    primaryClass={cs.LG}
-}
+    author={Cameron Voloshin and Hoang Minh Le and Nan Jiang and Yisong Yue},
+    booktitle={Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 1)},
+    year={2021},
+    url={https://openreview.net/forum?id=IsK8iKbL-I}
+  }
 ```
 
 
