@@ -1,43 +1,31 @@
 import numpy as np
+import argparse
+import json
+from copy import deepcopy
 
 from ope.envs.graph import Graph
 from ope.policies.basics import BasicPolicy
 
 from ope.experiment_tools.experiment import ExperimentRunner, analysis
 from ope.experiment_tools.config import Config
+from ope.experiment_tools.factory import get_model_from_name
 
+def main(param):
 
-def main():
+    # replace string of model with model itself in the configuration.
+    for method, parameters in param['models'].items():
+        if parameters['model'] != 'tabular':
+            param['models'][method]['model'] = get_model_from_name(parameters['model'])
 
     runner = ExperimentRunner()
 
-    # run 5 experiments
-    for N in range(5):
-
-        # basic configuration with varying number of trajectories
-        configuration = {
-            "gamma": 0.98,
-            "horizon": 4,
-            "base_policy": .8,
-            "eval_policy": .2,
-            "stochastic_env": True,
-            "stochastic_rewards": False,
-            "sparse_rewards": False,
-            "num_traj": 8*2**N,
-            "is_pomdp": False,
-            "pomdp_horizon": 2,
-            "seed": 1000,
-            "experiment_number": 0,
-            "access": 0,
-            "secret": 0,
-            "modeltype": "tabular",
-            "to_regress_pi_b": False,
-        }
-
-        # store them
+    for N in range(5): 
+        configuration = deepcopy(param['experiment']) # Make sure to deepcopy as to never change original
+        configuration['num_traj'] = 8*2**N # Increase dataset size
+        
         cfg = Config(configuration)
 
-        # initialize environment with this configuration
+         # initialize environment with this configuration
         env = Graph(make_pomdp=cfg.is_pomdp,
                     number_of_pomdp_states=cfg.pomdp_horizon,
                     transitions_deterministic=not cfg.stochastic_env,
@@ -69,23 +57,26 @@ def main():
             'processor': processor,
             'absorbing_state': absorbing_state
         })
+        cfg.add({'models': param['models']})
 
-        # Decide which OPE methods to run.
-        # Currently only all is available
-        cfg.add({'models': 'all'})
-
-        # Add the configuration
         runner.add(cfg)
 
-    # Run the configurations
     results = runner.run()
 
     # print results
     for result in results:
         analysis(result)
 
-
 if __name__ == '__main__':
     # Local:
-    # python example.py
-    main()
+    # python example_tabular.py tabular_example_cfg.json
+
+    parser = argparse.ArgumentParser(description='Distribute experiments across ec2 instances.')
+
+    parser.add_argument('cfg', help='config file', type=str)
+    args = parser.parse_args()
+
+    with open('cfgs/{0}'.format(args.cfg), 'r') as f:
+        param = json.load(f)
+
+    main(param)

@@ -12,7 +12,17 @@ COBS is based on Empirical Study of Off Policy Policy Estimation paper (https://
 
 ### Tutorial
 
-To get started using the experimental tools see [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipynb). For individual files, see [example3.py](https://github.com/clvoloshin/COBS/blob/master/example3.py) and [example4.py](https://github.com/clvoloshin/COBS/blob/master/example4.py).
+To get started using the experimental tools see [Tutorial.ipynb](https://github.com/clvoloshin/COBS/blob/master/Tutorial.ipynb). For individual files, see [example_tabular.py](https://github.com/clvoloshin/COBS/blob/master/example_tabular.py) and [example_nn.py](https://github.com/clvoloshin/COBS/blob/master/example_nn.py).
+
+To run [example_tabular.py](https://github.com/clvoloshin/COBS/blob/master/example_tabular.py):
+```
+python3 example_tabular.py tabular_example_cfg.json
+```
+
+To run [example_nn.py](https://github.com/clvoloshin/COBS/blob/master/example_nn.py):
+```
+python3 example_nn.py nn_example_cfg.json
+```
 
 ### Paper Reproducibility
 

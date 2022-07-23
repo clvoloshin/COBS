@@ -1,40 +1,25 @@
 import numpy as np
+import argparse
+import json
+from copy import deepcopy
 
 from ope.envs.gridworld import Gridworld
-from ope.models.epsilon_greedy_policy import EGreedyPolicy
-from ope.models.tabular_model import TabularPolicy
+from ope.policies.epsilon_greedy_policy import EGreedyPolicy
+from ope.policies.tabular_model import TabularPolicy
 
 from ope.experiment_tools.experiment import ExperimentRunner, analysis
 from ope.experiment_tools.config import Config
+from ope.experiment_tools.factory import setup_params
 
-def main():
+def main(param):
 
+    param = setup_params(param)
     runner = ExperimentRunner()
 
-    for N in range(5):
-        configuration = {
-            "gamma": 0.98,
-            "horizon": 5,
-            "base_policy": .8,
-            "eval_policy": .2,
-            "stochastic_env": True,
-            "stochastic_rewards": False,
-            "sparse_rewards": False,
-            "num_traj": 8*2**N,
-            "is_pomdp": False,
-            "pomdp_horizon": 2,
-            "seed": 1000,
-            "experiment_number": 0,
-            "access": 0,
-            "secret": 0,
-            "to_regress_pi_b": False,
-            "frameskip": 1,
-            "frameheight": 1,
-            "modeltype": 'conv',
-            "Qmodel": 'conv1',
-        }
-
-
+    for N in range(5): 
+        configuration = deepcopy(param['experiment']) # Make sure to deepcopy as to never change original
+        configuration['num_traj'] = 8*2**N # Increase dataset size
+        
         cfg = Config(configuration)
 
         env = Gridworld(slippage=.2*cfg.stochastic_env)
@@ -79,7 +64,7 @@ def main():
             'absorbing_state': absorbing_state,
             'convert_from_int_to_img': to_grid,
         })
-        cfg.add({'models': 'all'})
+        cfg.add({'models': param['models']})
 
         runner.add(cfg)
 
@@ -91,5 +76,14 @@ def main():
 
 if __name__ == '__main__':
     # Local:
-    # python example2.py
-    main()
+    # python example_nn.py nn_example_cfg.json
+
+    parser = argparse.ArgumentParser(description='Distribute experiments across ec2 instances.')
+
+    parser.add_argument('cfg', help='config file', type=str)
+    args = parser.parse_args()
+
+    with open('cfgs/{0}'.format(args.cfg), 'r') as f:
+        param = json.load(f)
+
+    main(param)
